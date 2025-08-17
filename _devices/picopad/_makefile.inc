@@ -1,0 +1,49 @@
+CSRC += ${PICOLIBSDK_DEVICES_DIR}/picopad/picopad_bat.c
+CSRC += ${PICOLIBSDK_DEVICES_DIR}/picopad/picopad_key.c
+CSRC += ${PICOLIBSDK_DEVICES_DIR}/picopad/picopad_led.c
+CSRC += ${PICOLIBSDK_DEVICES_DIR}/picopad/picopad_init.c
+CSRC += ${PICOLIBSDK_DEVICES_DIR}/picopad/picopad_ss.c
+
+DEFINE += -D USE_PICOPAD=1
+
+ifeq (${DEVICE},picopad08)
+DEFINE += -D USE_PICOPAD08=1
+MCU=RP2040
+FLASHSIZE=0x200000
+endif
+
+ifeq (${DEVICE},picopad10)
+DEFINE += -D USE_PICOPAD10=1
+MCU=RP2040
+FLASHSIZE=0x200000
+endif
+
+ifeq (${DEVICE},picopad20)
+DEFINE += -D USE_PICOPAD20=1
+MCU=RP2350A
+FLASHSIZE=0x400000
+endif
+
+ifeq (${DEVICE},picopad20riscv)
+DEFINE += -D USE_PICOPAD20=1
+MCU=RP2350ARISCV
+FLASHSIZE=0x400000
+endif
+
+ifeq (${DEVICE},picopadvga)
+DEFINE += -D USE_PICOPADVGA=1
+MCU=RP2040
+FLASHSIZE=0x200000
+endif
+
+ifeq (${DEVICE},picopadhstx)
+DEFINE += -D USE_PICOPADHSTX=1
+MCU=RP2350A
+FLASHSIZE=0x400000
+endif
+
+ifeq (${DEVICE},picopadhstxriscv)
+DEFINE += -D USE_PICOPADHSTX=1
+MCU=RP2350ARISCV
+FLASHSIZE=0x400000
+endif
