@@ -1406,6 +1406,13 @@ int main()
 	if (!loader && ConfigGetScreenSaver()) BootScreenSaver();
 #endif
 
+	// run embedded application even if SD card is present
+	if (!loader && CheckApp(NULL, NULL, NULL))
+	{
+		RunApp();
+	}
+
+
 	// clear screen
 	memset(FrameBuf, 0, sizeof(FrameBuf));
 	DispDirtyAll();
@@ -1426,8 +1433,7 @@ int main()
 	// try to mount disk
 	if (!DiskMount())
 	{
-		// cannot mount disk, try to run current application ... not if watchdog reset from application
-		if (!loader && CheckApp(NULL, NULL, NULL)) RunApp();
+		// SD mount failed
 	}
 	else
 	{
