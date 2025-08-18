@@ -127,64 +127,79 @@ void NES_TextPrintCenter(const char* txt)
 void NES_TextUpdate()
 {
 	u8 ch;
-	int line, col, pix;
-	u8* s = NES_TextFrame;
-	u16* c = NES_TextColor;
-	u16 cc, ccc;
-	u8* s2;
-	const u8* f = FontBold8x16;
-	u16 bg = NES_TextBgColor;
+        int line, col, pix;
+        u8* s = NES_TextFrame;
+        u16* c = NES_TextColor;
+        u16 cc, ccc;
+        u8* s2;
+        const u8* f = FontBold8x16;
+        u16 bg = NES_TextBgColor;
 
-	// start sending image data
-	DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
+        // scaling helpers
+        const int scaleextra = NES_TEXT_SCALE*2 - 100; // horizontal extra pixels
+        const int totalsrc = NES_MSG_WIDTH*8;
+        const int scaledwidth = totalsrc + (totalsrc*scaleextra)/100;
+        const int padwidth = EMU_LCD_WIDTH - scaledwidth;
 
-	// rows
-	for (line = 0; line < EMU_LCD_HEIGHT;)
-	{
-		cc = *c; // color of the row
-		s2 = s; // start of text row
+        // start sending image data
+        DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
 
-		// columns
-		for (col = 0; col < NES_MSG_WIDTH; col++)
-		{
-			// get character
-			ch = *s2++;
+        // rows
+        for (line = 0; line < EMU_LCD_HEIGHT;)
+        {
+                cc = *c; // color of the row
+                s2 = s; // start of text row
+                int acc = 0; // accumulator for horizontal scaling
 
-			// get font pixels
-			ch = f[ch];
+                // columns
+                for (col = 0; col < NES_MSG_WIDTH; col++)
+                {
+                        // get character
+                        ch = *s2++;
 
-			// draw pixels
-			for (pix = 8; pix > 0; pix--)
-			{
-				// send color of the pixel (or black color of the background)
-				ccc = ((ch & 0x80) != 0) ? cc : bg;
-				DispSendImg2(ccc);
-				DispSendImg2(ccc);
-				ch <<= 1;
-			}
-		}
+                        // get font pixels
+                        ch = f[ch];
 
-		// increase line
-		line++;
+                        // draw pixels
+                        for (pix = 8; pix > 0; pix--)
+                        {
+                                // send color of the pixel (or black color of the background)
+                                ccc = ((ch & 0x80) != 0) ? cc : bg;
+                                DispSendImg2(ccc);
+                                acc += scaleextra;
+                                if (acc >= 100)
+                                {
+                                        DispSendImg2(ccc);
+                                        acc -= 100;
+                                }
+                                ch <<= 1;
+                        }
+                }
 
-		// odd line - do nothing (repeat)
-		if (((line & 1) == 0) || (line >= NES_MSG_BTMLINE))
-		{
-			// shift to next line of the font
-			f += 256;
+        // pad remaining width with background color
+                for (pix = padwidth; pix > 0; pix--) DispSendImg2(bg);
 
-			// next row after 32 lines
-			if (((line & 0x1f) == 0) || (((line & 0x0f) == 0) && (line >= NES_MSG_BTMLINE)))
-			{
-				c++; // color of the row
-				s = s2; // start of text row
-				f = FontBold8x16; // font
-			}
-		}
-	}
+                // increase line
+                line++;
 
-	// stop sending data
-	DispStopImg();
+                // odd line - do nothing (repeat)
+                if (((line & 1) == 0) || (line >= NES_MSG_BTMLINE))
+                {
+                        // shift to next line of the font
+                        f += 256;
+
+                        // next row after 32 lines
+                        if (((line & 0x1f) == 0) || (((line & 0x0f) == 0) && (line >= NES_MSG_BTMLINE)))
+                        {
+                                c++; // color of the row
+                                s = s2; // start of text row
+                                f = FontBold8x16; // font
+                        }
+                }
+        }
+
+        // stop sending data
+        DispStopImg();
 }
 
 /*

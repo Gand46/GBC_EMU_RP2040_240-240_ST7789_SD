@@ -18,6 +18,9 @@
 #define NES_MSG_HEIGHT	11		// message text height of window, 4 rows height 32, 7 rows height 16
 #define NES_MSG_BTMLINE	(4*32)		// bottom line to start 16-line rows
 
+// text scale in percent (100 = original size)
+#define NES_TEXT_SCALE	95
+
 // text screen buffer (only characters; 160 bytes)
 extern u8 NES_TextFrame[NES_MSG_WIDTH*NES_MSG_HEIGHT];
 
