@@ -139,49 +139,65 @@ void NES_TextUpdate()
 	DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
 
 	// rows
-	for (line = 0; line < EMU_LCD_HEIGHT;)
-	{
-		cc = *c; // color of the row
-		s2 = s; // start of text row
+        for (line = 0; line < EMU_LCD_HEIGHT;)
+        {
+                // skip last 2 lines of 32-line block to shrink characters vertically
+                if (((line & 0x1f) == 30) && (line < NES_MSG_BTMLINE))
+                {
+                        for (col = NES_MSG_WIDTH*16*2; col > 0; col--)
+                                DispSendImg2(bg);
+                        line += 2;
+                        c++;
+                        s += NES_MSG_WIDTH;
+                        f = FontBold8x16;
+                        continue;
+                }
 
-		// columns
-		for (col = 0; col < NES_MSG_WIDTH; col++)
-		{
-			// get character
-			ch = *s2++;
+                cc = *c;        // color of the row
+                s2 = s;         // start of text row
 
-			// get font pixels
-			ch = f[ch];
+                // columns
+                for (col = 0; col < NES_MSG_WIDTH; col++)
+                {
+                        // get character
+                        ch = *s2++;
 
-			// draw pixels
-			for (pix = 8; pix > 0; pix--)
-			{
-				// send color of the pixel (or black color of the background)
-				ccc = ((ch & 0x80) != 0) ? cc : bg;
-				DispSendImg2(ccc);
-				DispSendImg2(ccc);
-				ch <<= 1;
-			}
-		}
+                        // get font pixels
+                        ch = f[ch];
 
-		// increase line
-		line++;
+                        // draw first 7 columns duplicated
+                        for (pix = 7; pix > 0; pix--)
+                        {
+                                ccc = ((ch & 0x80) != 0) ? cc : bg;
+                                DispSendImg2(ccc);
+                                DispSendImg2(ccc);
+                                ch <<= 1;
+                        }
 
-		// odd line - do nothing (repeat)
-		if (((line & 1) == 0) || (line >= NES_MSG_BTMLINE))
-		{
-			// shift to next line of the font
-			f += 256;
+                        // last column: single pixel followed by background spacer
+                        ccc = ((ch & 0x80) != 0) ? cc : bg;
+                        DispSendImg2(ccc);
+                        DispSendImg2(bg);
+                }
 
-			// next row after 32 lines
-			if (((line & 0x1f) == 0) || (((line & 0x0f) == 0) && (line >= NES_MSG_BTMLINE)))
-			{
-				c++; // color of the row
-				s = s2; // start of text row
-				f = FontBold8x16; // font
-			}
-		}
-	}
+                // increase line
+                line++;
+
+                // odd line - do nothing (repeat)
+                if (((line & 1) == 0) || (line >= NES_MSG_BTMLINE))
+                {
+                        // shift to next line of the font
+                        f += 256;
+
+                        // next row after 32 lines
+                        if (((line & 0x1f) == 0) || (((line & 0x0f) == 0) && (line >= NES_MSG_BTMLINE)))
+                        {
+                                c++;           // color of the row
+                                s = s2;       // start of text row
+                                f = FontBold8x16; // font
+                        }
+                }
+        }
 
 	// stop sending data
 	DispStopImg();
