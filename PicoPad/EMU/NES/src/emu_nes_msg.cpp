@@ -134,8 +134,10 @@ void NES_TextUpdate()
         u8* s2;
         const u8* f = FontBold8x16;
         u16 bg = NES_TextBgColor;
-        int rep = EMU_LCD_WIDTH / (NES_MSG_WIDTH*8);
-        int rem = EMU_LCD_WIDTH % (NES_MSG_WIDTH*8);
+        int scaled = EMU_LCD_WIDTH * NES_TEXT_SCALE / 100;
+        int pad = EMU_LCD_WIDTH - scaled;
+        int rep = scaled / (NES_MSG_WIDTH*8);
+        int rem = scaled % (NES_MSG_WIDTH*8);
 
         // start sending image data
         DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
@@ -171,6 +173,9 @@ void NES_TextUpdate()
                                 ch <<= 1;
                         }
                 }
+
+                for (int n = pad; n > 0; n--) DispSendImg2(bg);
+
                 // increase line
                 line++;
 
