@@ -134,15 +134,28 @@ void NES_TextUpdate()
         u8* s2;
         const u8* f = FontBold8x16;
         u16 bg = NES_TextBgColor;
-        int scaled = EMU_LCD_WIDTH * NES_TEXT_SCALE / 100;
-        int pad = EMU_LCD_WIDTH - scaled;
-        int padleft = pad/2;
-        int padright = pad - padleft;
-        int rep = scaled / (NES_MSG_WIDTH*8);
-        int rem = scaled % (NES_MSG_WIDTH*8);
+
+        int scaledw = EMU_LCD_WIDTH * NES_TEXT_SCALE / 100;
+        int padw = EMU_LCD_WIDTH - scaledw;
+        int padleft = padw/2;
+        int padright = padw - padleft;
+        int rep = scaledw / (NES_MSG_WIDTH*8);
+        int rem = scaledw % (NES_MSG_WIDTH*8);
+
+        int scaledh = EMU_LCD_HEIGHT * NES_TEXT_SCALE / 100;
+        int padh = EMU_LCD_HEIGHT - scaledh;
+        int padtop = padh/2;
+        int padbottom = padh - padtop;
+        int repv = scaledh / EMU_LCD_HEIGHT;
+        int remv = scaledh % EMU_LCD_HEIGHT;
+        int accv = 0;
 
         // start sending image data
         DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
+
+        // top padding lines
+        for (int v = padtop; v > 0; v--)
+                for (int n = EMU_LCD_WIDTH; n > 0; n--) DispSendImg2(bg);
 
         // rows
         for (line = 0; line < EMU_LCD_HEIGHT;)
@@ -151,34 +164,45 @@ void NES_TextUpdate()
                 s2 = s; // start of text row
                 int acc = 0;
 
-                for (int n = padleft; n > 0; n--) DispSendImg2(bg);
-
-                // columns
-                for (col = 0; col < NES_MSG_WIDTH; col++)
+                int out = repv;
+                accv += remv;
+                if (accv >= EMU_LCD_HEIGHT)
                 {
-                        // get character
-                        ch = *s2++;
-
-                        // get font pixels
-                        ch = f[ch];
-
-                        // draw pixels
-                        for (pix = 8; pix > 0; pix--)
-                        {
-                                ccc = ((ch & 0x80) != 0) ? cc : bg;
-                                int n = rep;
-                                acc += rem;
-                                if (acc >= NES_MSG_WIDTH*8)
-                                {
-                                        n++;
-                                        acc -= NES_MSG_WIDTH*8;
-                                }
-                                for (; n > 0; n--) DispSendImg2(ccc);
-                                ch <<= 1;
-                        }
+                        out++;
+                        accv -= EMU_LCD_HEIGHT;
                 }
 
-                for (int n = padright; n > 0; n--) DispSendImg2(bg);
+                for (; out > 0; out--)
+                {
+                        for (int n = padleft; n > 0; n--) DispSendImg2(bg);
+
+                        // columns
+                        for (col = 0; col < NES_MSG_WIDTH; col++)
+                        {
+                                // get character
+                                ch = *s2++;
+
+                                // get font pixels
+                                ch = f[ch];
+
+                                // draw pixels
+                                for (pix = 8; pix > 0; pix--)
+                                {
+                                        ccc = ((ch & 0x80) != 0) ? cc : bg;
+                                        int n = rep;
+                                        acc += rem;
+                                        if (acc >= NES_MSG_WIDTH*8)
+                                        {
+                                                n++;
+                                                acc -= NES_MSG_WIDTH*8;
+                                        }
+                                        for (; n > 0; n--) DispSendImg2(ccc);
+                                        ch <<= 1;
+                                }
+                        }
+
+                        for (int n = padright; n > 0; n--) DispSendImg2(bg);
+                }
 
                 // increase line
                 line++;
@@ -198,6 +222,10 @@ void NES_TextUpdate()
                         }
                 }
         }
+
+        // bottom padding lines
+        for (int v = padbottom; v > 0; v--)
+                for (int n = EMU_LCD_WIDTH; n > 0; n--) DispSendImg2(bg);
 
         // stop sending data
         DispStopImg();
