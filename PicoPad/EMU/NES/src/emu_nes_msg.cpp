@@ -134,10 +134,9 @@ void NES_TextUpdate()
         u8* s2;
         const u8* f = FontBold8x16;
         u16 bg = NES_TextBgColor;
-        int scaled = EMU_LCD_WIDTH * NES_TEXT_SCALE / 100;
+        int scaled = EMU_LCD_WIDTH;
         int pad = EMU_LCD_WIDTH - scaled;
-        int padleft = pad/2;
-        int padright = pad - padleft;
+        int padright = pad;
         int rep = scaled / (NES_MSG_WIDTH*8);
         int rem = scaled % (NES_MSG_WIDTH*8);
 
@@ -151,7 +150,7 @@ void NES_TextUpdate()
                 s2 = s; // start of text row
                 int acc = 0;
 
-                for (int n = padleft; n > 0; n--) DispSendImg2(bg);
+                // no left padding to keep text aligned to the left
 
                 // columns
                 for (col = 0; col < NES_MSG_WIDTH; col++)
