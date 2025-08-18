@@ -136,6 +136,8 @@ void NES_TextUpdate()
         u16 bg = NES_TextBgColor;
         int scaled = EMU_LCD_WIDTH * NES_TEXT_SCALE / 100;
         int pad = EMU_LCD_WIDTH - scaled;
+        int padleft = pad/2;
+        int padright = pad - padleft;
         int rep = scaled / (NES_MSG_WIDTH*8);
         int rem = scaled % (NES_MSG_WIDTH*8);
 
@@ -148,6 +150,8 @@ void NES_TextUpdate()
                 cc = *c; // color of the row
                 s2 = s; // start of text row
                 int acc = 0;
+
+                for (int n = padleft; n > 0; n--) DispSendImg2(bg);
 
                 // columns
                 for (col = 0; col < NES_MSG_WIDTH; col++)
@@ -174,7 +178,7 @@ void NES_TextUpdate()
                         }
                 }
 
-                for (int n = pad; n > 0; n--) DispSendImg2(bg);
+                for (int n = padright; n > 0; n--) DispSendImg2(bg);
 
                 // increase line
                 line++;
