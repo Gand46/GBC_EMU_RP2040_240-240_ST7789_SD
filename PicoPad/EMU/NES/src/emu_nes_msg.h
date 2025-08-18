@@ -14,9 +14,22 @@
 //	This source code is freely available for any purpose, including commercial.
 //	It is possible to take and modify the code or parts of it, without restriction.
 
-#define NES_MSG_WIDTH   (WIDTH*16/240)  // message text width (~5% smaller, ~15 px per char)
-#define NES_MSG_HEIGHT  11              // message text height of window, 4 rows height 32, 7 rows height 16
-#define NES_MSG_BTMLINE (4*32)          // bottom line to start 16-line rows
+// limit text rendering to 240x240 even if global WIDTH/HEIGHT are larger
+#if WIDTH > 240
+#define NES_LCD_WIDTH   240
+#else
+#define NES_LCD_WIDTH   WIDTH
+#endif
+
+#if HEIGHT > 240
+#define NES_LCD_HEIGHT  240
+#else
+#define NES_LCD_HEIGHT  HEIGHT
+#endif
+
+#define NES_MSG_WIDTH   (NES_LCD_WIDTH*16/240) // message text width (~5% smaller, ~15 px per char)
+#define NES_MSG_HEIGHT  11                     // message text height of window, 4 rows height 32, 7 rows height 16
+#define NES_MSG_BTMLINE (4*32)                 // bottom line to start 16-line rows
 
 // text screen buffer (only characters; 176 bytes)
 extern u8 NES_TextFrame[NES_MSG_WIDTH*NES_MSG_HEIGHT];

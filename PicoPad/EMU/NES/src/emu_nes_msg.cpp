@@ -16,8 +16,8 @@
 
 #include "../include.h"
 
-#define EMU_LCD_WIDTH	WIDTH	// LCD display width
-#define EMU_LCD_HEIGHT	HEIGHT	// LCD display height
+#define EMU_LCD_WIDTH   NES_LCD_WIDTH	// LCD display width
+#define EMU_LCD_HEIGHT  NES_LCD_HEIGHT	// LCD display height
 
 // text screen buffer (only characters; 176 bytes)
 u8 NES_TextFrame[NES_MSG_WIDTH*NES_MSG_HEIGHT];
@@ -134,8 +134,8 @@ void NES_TextUpdate()
         u8* s2;
         const u8* f = FontBold8x16;
         u16 bg = NES_TextBgColor;
-        int rep = WIDTH / (NES_MSG_WIDTH*8);
-        int rem = WIDTH % (NES_MSG_WIDTH*8);
+        int rep = EMU_LCD_WIDTH / (NES_MSG_WIDTH*8);
+        int rem = EMU_LCD_WIDTH % (NES_MSG_WIDTH*8);
 
         // start sending image data
         DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
