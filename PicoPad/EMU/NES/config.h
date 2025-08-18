@@ -101,7 +101,9 @@
 //#define GB_RAM_BASE		((u8*)FrameBuf)	// RAM base address (declared as u8*)
 //#define GB_RAM_SIZE		(200*1024)	// RAM size in number of bytes
 
-#define USE_PWMSND		0		// use PWM sound output; set 1.. = number of channels (lib_pwmsnd.c, lib_pwmsnd.h)
+#define USE_PWMSND              2               // use PWM sound output; set 1.. = number of channels (lib_pwmsnd.c, lib_pwmsnd.h)
+#define PWMSND_GPIO             15              // PWM sound output GPIO pin (left channel)
+#define PWMSND_GPIO_R           14              // PWM sound output GPIO pin (right channel; -1 = not used, only single channel is used)
 //#define USE_ORIGSDK		1		// include interface of original-SDK
 //#define EMU_DEBUG_SYNC	1		// 1 = debug measure time synchronization
 //#define USE_SCREENSHOT	1		// use screen shots
