@@ -19,7 +19,7 @@
 #define EMU_LCD_WIDTH	WIDTH	// LCD display width
 #define EMU_LCD_HEIGHT	HEIGHT	// LCD display height
 
-// text screen buffer (only characters; 160 bytes)
+// text screen buffer (only characters; 176 bytes)
 u8 NES_TextFrame[NES_MSG_WIDTH*NES_MSG_HEIGHT];
 
 // colors of rows
@@ -126,7 +126,7 @@ void NES_TextPrintCenter(const char* txt)
 // update text screen on display
 void NES_TextUpdate()
 {
-	u8 ch;
+        u8 ch;
         int line, col, pix;
         u8* s = NES_TextFrame;
         u16* c = NES_TextColor;
@@ -134,12 +134,8 @@ void NES_TextUpdate()
         u8* s2;
         const u8* f = FontBold8x16;
         u16 bg = NES_TextBgColor;
-
-        // scaling helpers
-        const int scaleextra = NES_TEXT_SCALE*2 - 100; // horizontal extra pixels
-        const int totalsrc = NES_MSG_WIDTH*8;
-        const int scaledwidth = totalsrc + (totalsrc*scaleextra)/100;
-        const int padwidth = EMU_LCD_WIDTH - scaledwidth;
+        int rep = WIDTH / (NES_MSG_WIDTH*8);
+        int rem = WIDTH % (NES_MSG_WIDTH*8);
 
         // start sending image data
         DispStartImg(0, EMU_LCD_WIDTH, 0, EMU_LCD_HEIGHT);
@@ -149,7 +145,7 @@ void NES_TextUpdate()
         {
                 cc = *c; // color of the row
                 s2 = s; // start of text row
-                int acc = 0; // accumulator for horizontal scaling
+                int acc = 0;
 
                 // columns
                 for (col = 0; col < NES_MSG_WIDTH; col++)
@@ -163,22 +159,18 @@ void NES_TextUpdate()
                         // draw pixels
                         for (pix = 8; pix > 0; pix--)
                         {
-                                // send color of the pixel (or black color of the background)
                                 ccc = ((ch & 0x80) != 0) ? cc : bg;
-                                DispSendImg2(ccc);
-                                acc += scaleextra;
-                                if (acc >= 100)
+                                int n = rep;
+                                acc += rem;
+                                if (acc >= NES_MSG_WIDTH*8)
                                 {
-                                        DispSendImg2(ccc);
-                                        acc -= 100;
+                                        n++;
+                                        acc -= NES_MSG_WIDTH*8;
                                 }
+                                for (; n > 0; n--) DispSendImg2(ccc);
                                 ch <<= 1;
                         }
                 }
-
-        // pad remaining width with background color
-                for (pix = padwidth; pix > 0; pix--) DispSendImg2(bg);
-
                 // increase line
                 line++;
 
