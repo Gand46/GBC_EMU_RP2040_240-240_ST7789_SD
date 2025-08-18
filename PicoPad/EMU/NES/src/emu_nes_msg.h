@@ -26,8 +26,8 @@
 #else
 #define NES_LCD_HEIGHT  HEIGHT
 #endif
-#define NES_MSG_WIDTH   (NES_LCD_WIDTH*16/240) // message text width (16 columns)
-#define NES_TEXT_SCALE  80                      // horizontal text scale in percent (100 = original size, 80 = 20% smaller)
+#define NES_MSG_WIDTH   (NES_LCD_WIDTH*21/240) // message text width (21 columns)
+#define NES_TEXT_SCALE  100                     // horizontal text scale in percent (100 = original size, 80 = 20% smaller)
 #define NES_MSG_HEIGHT  11                     // message text height of window, 4 rows height 32, 7 rows height 16
 #define NES_MSG_BTMLINE (4*32)                 // bottom line to start 16-line rows
 
