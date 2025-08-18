@@ -48,6 +48,16 @@
 #define USE_FRAMEBUF		0		// do not use pre-defined Frame buffer
 #endif // USE_PICOPADHSTX
 
+#define USE_DISPHSTXMINI        0       // 0=do not use HSTX Display Mini driver
+#define USE_DISPHSTX            0       // 0=do not use HSTX Display driver
+#define DISPHSTX_USE_DVI        0       // 0=disable DVI (HDMI) support
+#define DISPHSTX_USE_VGA        0       // 0=disable VGA support
+
+// Configure built-in ST7789 LCD
+#define USE_ST7789              1       // use ST7789 display driver
+#define WIDTH                   240     // display width
+#define HEIGHT                  240     // display height
+
 //#define FONT			FontBold8x8	// default system font
 //#define FONTW			8		// width of system font
 //#define FONTH			8		// height of system font
