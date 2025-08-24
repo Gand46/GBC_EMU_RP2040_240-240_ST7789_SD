@@ -754,6 +754,10 @@ void FASTCODE NOFLASH(core1DrawFrame)()
         int x, y, ys, ys2, rinx;
         u16* s;
         u16 linebuf[WIDTH];
+#if USE_SCANLINE_BLEND
+        u16 prev_line[WIDTH];
+        for (x = 0; x < WIDTH; x++) prev_line[x] = 0;
+#endif
 
 #if DEB_FPS                     // debug display FPS
         u16 buf[16*16];
@@ -827,6 +831,16 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                {
                        for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
                }
+
+#if USE_SCANLINE_BLEND
+               for (x = 0; x < WIDTH; x++)
+               {
+                       u16 col = linebuf[x];
+                       if (y & 1) col = (col + prev_line[x]) >> 1;
+                       prev_line[x] = linebuf[x];
+                       linebuf[x] = col;
+               }
+#endif
 
                 DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
