@@ -1334,9 +1334,9 @@ static Bool FileExists(const char* path)
 }
 
 // screen saver: replaces the default "Going To Sleep" menu with an optional
-// boot animation. If a file named `load.gif` or `load.mp4` exists on the SD
-// card, it will be played in a loop until a key is pressed. Otherwise the
-// original text countdown is shown.
+// boot animation. If a file named `load.gif` exists on the SD card, it will
+// be played in a loop until a key is pressed. Otherwise the original text
+// countdown is shown.
 void BootScreenSaver()
 {
         int cnt, j;
@@ -1352,19 +1352,11 @@ void BootScreenSaver()
 
 #if USE_VIDEO
         const char* gif = "/load.gif";
-        const char* mp4 = "/load.mp4";
-        const char* anim = NULL;
 
-        // Prefer GIF as it is cheaper to decode on RP2040, but allow MP4 if provided
         if (FileExists(gif))
-                anim = gif;
-        else if (FileExists(mp4))
-                anim = mp4;
-
-        if (anim != NULL)
         {
                 sVideo video;
-                if (VideoOpen(&video, anim))
+                if (VideoOpen(&video, gif))
                 {
                         while (KeyGet() == NOKEY)
                         {
