@@ -1323,6 +1323,16 @@ void RunRAM(int num)
 }
 
 #if USE_ST7789		// use ST7789 TFT display (st7789.c, st7789.h)
+
+// check if file exists on disk
+static Bool FileExists(const char* path)
+{
+	sFile file;
+	Bool res = FileOpen(&file, path);
+	if (res) FileClose(&file);
+	return res;
+}
+
 // screen saver
 void BootScreenSaver()
 {
@@ -1336,6 +1346,35 @@ void BootScreenSaver()
 
 	// flush keyboard
 	KeyFlush();
+
+#if USE_VIDEO
+	const char* gif = "/load.gif";
+	const char* mp4 = "/load.mp4";
+	const char* anim = NULL;
+	if (FileExists(gif))
+		anim = gif;
+	else if (FileExists(mp4))
+		anim = mp4;
+	if (anim != NULL)
+	{
+		sVideo video;
+		if (VideoOpen(&video, anim))
+		{
+			while (KeyGet() == NOKEY)
+			{
+				if (!VideoPlayFrame(&video))
+				{
+					FileSeek(&video.file, 0);
+					video.frame = 0;
+				}
+			}
+			VideoClose(&video);
+		}
+		DispBacklightUpdate();
+		return;
+	}
+#endif
+
 
 	// wait for continue
         while (True)
