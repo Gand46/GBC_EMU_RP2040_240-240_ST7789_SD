@@ -30,8 +30,9 @@
 #define PROGRESS_H 16
 #endif
 
-// custom frame buffer - used as buffer to load UF2 program into RAM
-ALIGNED FRAMETYPE FrameBuf[CUSTOM_FRAMEBUF_SIZE];
+// custom buffer used to load UF2 program into RAM. Rename to avoid clash
+// with the display's FrameBuf provided by the video library.
+ALIGNED FRAMETYPE LoadBuf[CUSTOM_FRAMEBUF_SIZE];
 
 // display
 COLTYPE FgCol, BgCol; // foreground and background color
@@ -1313,10 +1314,10 @@ void RunRAM(int num)
 	// runtime terminate
 	RuntimeTerm();
 
-	// copy program to RAM
-	u8* s = (u8*)FrameBuf;
-	u8* d = (u8*)SRAM_BASE;
-	for (; num > 0; num--) *d++ = *s++;
+       // copy program to RAM from the temporary load buffer
+       u8* s = (u8*)LoadBuf;
+       u8* d = (u8*)SRAM_BASE;
+       for (; num > 0; num--) *d++ = *s++;
 
 	// run application from RAM
 	GoToAppRam();
@@ -1798,14 +1799,14 @@ int main()
 									DispBigInfo("Loading into RAM...");
 									j = 32;
 									m = 0;
-									while (m <= CUSTOM_FRAMEBUF_SIZE*sizeof(FRAMETYPE) - 256)
-									{
-										FileSeek(&PrevFile, j);
-										TempBufNum = FileRead(&PrevFile, ((u8*)FrameBuf) + m, 256);
-										if (TempBufNum <= 0) break;
-										m += TempBufNum;
-										j += 512;
-									}
+                                                                       while (m <= CUSTOM_FRAMEBUF_SIZE*sizeof(FRAMETYPE) - 256)
+                                                                       {
+                                                                               FileSeek(&PrevFile, j);
+                                                                               TempBufNum = FileRead(&PrevFile, ((u8*)LoadBuf) + m, 256);
+                                                                               if (TempBufNum <= 0) break;
+                                                                               m += TempBufNum;
+                                                                               j += 512;
+                                                                       }
 									FileClose(&PrevFile);
 
 									// run application in RAM
