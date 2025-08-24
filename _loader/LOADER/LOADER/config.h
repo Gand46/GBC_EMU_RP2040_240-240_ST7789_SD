@@ -134,7 +134,7 @@
 //#define USE_MAT2D	1		// use 2D transformation matrix (lib_mat2d.c, lib_mat2d.h)
 //#define USE_MALLOC	1		// use Memory Allocator (lib_malloc.c, lib_malloc.h)
 //#define USE_PRINT	1		// use Formatted print (lib_print.c, lib_print.h)
-#define USE_PWMSND	0		// use PWM sound output; set 1.. = number of channels (lib_pwmsnd.c, lib_pwmsnd.h)
+#define USE_PWMSND      1		// use PWM sound output; set 1.. = number of channels (lib_pwmsnd.c, lib_pwmsnd.h)
 #define USE_RAND	0		// use Random number generator (lib_rand.c, lib_rand.h)
 #define USE_RECT	0		// use Rectangle (lib_rect.c, lib_rect.h)
 #define USE_RING	0		// use Ring buffer (lib_ring.c, lib_ring.h)
