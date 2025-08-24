@@ -47,6 +47,19 @@ u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
 // scaling lookup tables
 u8 lut_x[WIDTH];
 u8 lut_y[HEIGHT];
+#if USE_BILINEAR_SCALE
+u8 lut_x_frac[WIDTH];
+u8 lut_y_frac[HEIGHT];
+
+static inline u16 mix565(u16 a, u16 b, u32 t)
+{
+    u32 w0 = 256 - t;
+    u32 w1 = t;
+    u32 rb = ((a & 0xF81F) * w0 + (b & 0xF81F) * w1) >> 8;
+    u32 g  = ((a & 0x07E0) * w0 + (b & 0x07E0) * w1) >> 8;
+    return (u16)((rb & 0xF81F) | (g & 0x07E0));
+}
+#endif
 
 
 #if DEB_FPS			// debug display FPS
@@ -753,11 +766,7 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 {
         int x, y, ys, ys2, rinx;
         u16* s;
-        u16 linebuf[WIDTH];
-#if USE_SCANLINE_BLEND
-        u16 prev_line[WIDTH];
-        for (x = 0; x < WIDTH; x++) prev_line[x] = 0;
-#endif
+    u16 linebuf[WIDTH];
 
 #if DEB_FPS                     // debug display FPS
         u16 buf[16*16];
@@ -811,6 +820,20 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 
                 ys = lut_y[y];
                 s = &gbContext.framebuf[rinx*LCD_WIDTH];
+#if USE_BILINEAR_SCALE
+                int fy = lut_y_frac[y];
+                u16* s1 = s;
+                if (fy && (ys < LCD_HEIGHT-1))
+                {
+                        int rinx2 = rinx + 1;
+                        if (rinx2 >= LCD_FRAMEHEIGHT) rinx2 = 0;
+                        while (rinx2 == gbContext.frame_write)
+                        {
+                                if (GB_DispMode == GB_DISPMODE_MSG) return;
+                        }
+                        s1 = &gbContext.framebuf[rinx2*LCD_WIDTH];
+                }
+#endif
 
                 DispStartImg(0, WIDTH, y, y+1);
 
@@ -823,26 +846,47 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                                if (x < 16)
                                        linebuf[x] = s2[x];
                                else
+#if USE_BILINEAR_SCALE
+                               {
+                                       int sx = lut_x[x];
+                                       int sx1 = (sx < LCD_WIDTH-1) ? sx + 1 : sx;
+                                       int fx = lut_x_frac[x];
+                                       u16 c00 = s[sx];
+                                       u16 c10 = s[sx1];
+                                       u16 c01 = s1[sx];
+                                       u16 c11 = s1[sx1];
+                                       u16 c0 = mix565(c00, c10, fx);
+                                       u16 c1 = mix565(c01, c11, fx);
+                                       linebuf[x] = mix565(c0, c1, fy);
+                               }
+#else
                                        linebuf[x] = s[lut_x[x]];
+#endif
                        }
                }
                else
 #endif
                {
+#if USE_BILINEAR_SCALE
+                       for (x = 0; x < WIDTH; x++)
+                       {
+                               int sx = lut_x[x];
+                               int sx1 = (sx < LCD_WIDTH-1) ? sx + 1 : sx;
+                               int fx = lut_x_frac[x];
+                               u16 c00 = s[sx];
+                               u16 c10 = s[sx1];
+                               u16 c01 = s1[sx];
+                               u16 c11 = s1[sx1];
+                               u16 c0 = mix565(c00, c10, fx);
+                               u16 c1 = mix565(c01, c11, fx);
+                               linebuf[x] = mix565(c0, c1, fy);
+                       }
+#else
                        for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
-               }
-
-#if USE_SCANLINE_BLEND
-               for (x = 0; x < WIDTH; x++)
-               {
-                       u16 col = linebuf[x];
-                       if (y & 1) col = (col + prev_line[x]) >> 1;
-                       prev_line[x] = linebuf[x];
-                       linebuf[x] = col;
-               }
 #endif
+               }
 
-                DispWriteDataDMA(linebuf, WIDTH*2);
+               DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
                 DispStopImg();
 
@@ -1096,8 +1140,23 @@ void GB_Setup()
 
 	// clear context
 	memset(&gbContext, 0, sizeof(gbContext));
+#if USE_BILINEAR_SCALE
+        for (int i = 0; i < WIDTH; i++)
+        {
+                int t = i * LCD_WIDTH;
+                lut_x[i] = t / WIDTH;
+                lut_x_frac[i] = (t % WIDTH) * 256 / WIDTH;
+        }
+        for (int j = 0; j < HEIGHT; j++)
+        {
+                int t = j * LCD_HEIGHT;
+                lut_y[j] = t / HEIGHT;
+                lut_y_frac[j] = (t % HEIGHT) * 256 / HEIGHT;
+        }
+#else
         for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
         for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+#endif
 
 	// select colorization palette
 	gbSelectColorizationPalette();

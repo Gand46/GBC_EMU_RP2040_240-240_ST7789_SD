@@ -23,7 +23,7 @@
 #define USE_ST7789              1       // 1=use ST7789 display driver
 #define WIDTH                   240     // display width
 #define HEIGHT                  240     // display height
-#define USE_SCANLINE_BLEND      1       // 1=apply vertical scanline blending
+#define USE_BILINEAR_SCALE      1       // 1=use simplified bilinear scaling
 
 // Frame buffer and font settings
 #define USE_FRAMEBUF            0               // do not use pre-defined Frame buffer
