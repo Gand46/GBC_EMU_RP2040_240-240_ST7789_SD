@@ -1348,31 +1348,36 @@ void BootScreenSaver()
 	KeyFlush();
 
 #if USE_VIDEO
-	const char* gif = "/load.gif";
-	const char* mp4 = "/load.mp4";
-	const char* anim = NULL;
-	if (FileExists(gif))
-		anim = gif;
-	else if (FileExists(mp4))
-		anim = mp4;
-	if (anim != NULL)
-	{
-		sVideo video;
-		if (VideoOpen(&video, anim))
-		{
-			while (KeyGet() == NOKEY)
-			{
-				if (!VideoPlayFrame(&video))
-				{
-					FileSeek(&video.file, 0);
-					video.frame = 0;
-				}
-			}
-			VideoClose(&video);
-		}
-		DispBacklightUpdate();
-		return;
-	}
+        const char* gif = "/load.gif";
+        const char* mp4 = "/load.mp4";
+        const char* anim = NULL;
+
+        // Prefer GIF as it is cheaper to decode on RP2040, but allow MP4 if provided
+        if (FileExists(gif))
+                anim = gif;
+        else if (FileExists(mp4))
+                anim = mp4;
+
+        if (anim != NULL)
+        {
+                sVideo video;
+                if (VideoOpen(&video, anim))
+                {
+                        while (KeyGet() == NOKEY)
+                        {
+                                if (!VideoPlayFrame(&video))
+                                {
+                                        FileSeek(&video.file, 0);
+                                        video.frame = 0;
+                                }
+                                // ensure frame is pushed to display
+                                DispUpdate();
+                        }
+                        VideoClose(&video);
+                }
+                DispBacklightUpdate();
+                return;
+        }
 #endif
 
 
