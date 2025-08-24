@@ -543,7 +543,7 @@ RAMSIZE		// RAM base size in bytes (256 KB or 512 KB)
 #endif
 
 #ifndef USE_VIDEO
-#define USE_VIDEO	0		// use video player (lib_video.c, lib_video.h)
+#define USE_VIDEO       1		// use video player (lib_video.c, lib_video.h)
 #endif
 
 #ifndef FONT
@@ -1013,7 +1013,7 @@ RAMSIZE		// RAM base size in bytes (256 KB or 512 KB)
 #endif
 
 #ifndef TEMP_BASE
-#define TEMP_BASE	0.706f		// temperature base voltage at 27°C (default value, use Config.temp_base)
+#define TEMP_BASE	0.706f		// temperature base voltage at 27Â°C (default value, use Config.temp_base)
 #endif
 
 #ifndef TEMP_SLOPE

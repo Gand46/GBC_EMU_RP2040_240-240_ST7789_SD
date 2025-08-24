@@ -1333,12 +1333,15 @@ static Bool FileExists(const char* path)
 	return res;
 }
 
-// screen saver
+// screen saver: replaces the default "Going To Sleep" menu with an optional
+// boot animation. If a file named `load.gif` or `load.mp4` exists on the SD
+// card, it will be played in a loop until a key is pressed. Otherwise the
+// original text countdown is shown.
 void BootScreenSaver()
 {
-	int cnt, j;
+        int cnt, j;
 
-	// short wait to stabilize power supply (1 ms works fine)
+        // short wait to stabilize power supply (1 ms works fine)
 	WaitMs(10);
 
 	// measure power supply

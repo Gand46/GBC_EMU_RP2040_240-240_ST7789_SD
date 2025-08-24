@@ -179,8 +179,13 @@ ALLOBJ = $(addprefix $(TEMP)/, $(addsuffix .o, $(ALLBASE)))
 # Clear temporary directory (use "make clean")
 
 clean:
+ifeq (${OS},Windows_NT)
 	@../_tools/rm.exe -rf $(TEMP)
 	@../_tools/rm.exe -f ./$(TARGET).bin ./$(TARGET).hex ./$(TARGET).lst ./$(TARGET).map ./$(TARGET).sym ./$(TARGET).siz
+else
+	@rm -rf $(TEMP)
+	@rm -f ./$(TARGET).bin ./$(TARGET).hex ./$(TARGET).lst ./$(TARGET).map ./$(TARGET).sym ./$(TARGET).siz
+endif
 
 ##############################################################################
 # Compile all (use "make all")
