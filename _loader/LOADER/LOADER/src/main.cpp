@@ -1446,9 +1446,9 @@ int main()
 	if (!loader && ConfigGetScreenSaver()) BootScreenSaver();
 #endif
 
-	// clear screen
-	memset(FrameBuf, 0, sizeof(FrameBuf));
-	DispDirtyAll();
+       // clear screen
+       memset(FrameBuf, 0, FRAMESIZE * sizeof(FrameBuf[0]));
+       DispDirtyAll();
 
 	// reset to root
 	LastNameLen = 0; // no last name
