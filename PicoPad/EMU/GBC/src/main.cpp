@@ -1082,9 +1082,33 @@ void GB_Setup()
 
 	// clear context
 	memset(&gbContext, 0, sizeof(gbContext));
-        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
-
+	// generate scaling lookup tables using Bresenham-style cadence
+	// X: 160->240 (2->3) produces pattern [S0,S0,S1]
+	int err = 0;
+	int src = 0;
+	for (int dst = 0; dst < WIDTH; dst++)
+	{
+		lut_x[dst] = src;
+		err += LCD_WIDTH;
+		if (err >= WIDTH)
+		{
+			err -= WIDTH;
+			src++;
+		}
+	}
+	// Y: 144->240 (3->5) produces pattern [R0,R1,R1,R2,R2]
+	err = HEIGHT - LCD_HEIGHT;
+	src = 0;
+	for (int dst = 0; dst < HEIGHT; dst++)
+	{
+		lut_y[dst] = src;
+		err += LCD_HEIGHT;
+		if (err >= HEIGHT)
+		{
+			err -= HEIGHT;
+			src++;
+		}
+	}
 	// select colorization palette
 	gbSelectColorizationPalette();
 
