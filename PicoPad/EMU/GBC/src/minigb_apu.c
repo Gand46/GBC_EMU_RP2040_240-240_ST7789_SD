@@ -156,19 +156,70 @@ static void FASTCODE NOFLASH(update_square)(s16 *samples, const bool ch2, int sa
        s32 left = c->on_left ? vol_l : 0;
        s32 right = c->on_right ? vol_r : 0;
        s32 vol = volume_table[c->volume];
+       u32 pos, prev_pos;
+       s32 sample;
 
        for (uint_fast16_t i = 0; i < samples_num*2; i += 2)
        {
-               update_len(c);
+               if (c->len.enabled)
+               {
+                       c->len.counter += c->len.inc;
+                       if (c->len.counter > FREQ_INC_REF)
+                       {
+                               chan_enable(c - chans, 0);
+                               c->len.counter = 0;
+                       }
+               }
 
                if (!c->enabled) continue;
 
-               update_env(c);
-               if (!ch2) update_sweep(c);
+               c->env.counter += c->env.inc;
+               while (c->env.counter > FREQ_INC_REF)
+               {
+                       if (c->env.step)
+                       {
+                               c->volume += c->env.up ? 1 : -1;
+                               if (c->volume == 0 || c->volume == MAX_CHAN_VOLUME)
+                               {
+                                       c->env.inc = 0;
+                               }
+                               c->volume = MAX(0, MIN(MAX_CHAN_VOLUME, c->volume));
+                       }
+                       c->env.counter -= FREQ_INC_REF;
+               }
 
-               u32 pos = 0;
-               u32 prev_pos = 0;
-               s32 sample = 0;
+               if (!ch2)
+               {
+                       c->sweep.counter += c->sweep.inc;
+                       while (c->sweep.counter > FREQ_INC_REF)
+                       {
+                               if (c->sweep.shift)
+                               {
+                                       u16 inc = (c->sweep.freq >> c->sweep.shift);
+                                       if (!c->sweep.up) inc *= -1;
+
+                                       c->freq += inc;
+                                       if (c->freq > 2047)
+                                       {
+                                               c->enabled = 0;
+                                       }
+                                       else
+                                       {
+                                               set_note_freq(c, DMG_CLOCK_FREQ_U / ((2048 - c->freq) << 5));
+                                               c->freq_inc *= 8;
+                                       }
+                               }
+                               else if (c->sweep.rate)
+                               {
+                                       c->enabled = 0;
+                               }
+                               c->sweep.counter -= FREQ_INC_REF;
+                       }
+               }
+
+               pos = 0;
+               prev_pos = 0;
+               sample = 0;
 
                while (update_freq(c, &pos))
                {

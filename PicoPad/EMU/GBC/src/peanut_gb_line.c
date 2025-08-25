@@ -32,6 +32,7 @@
 // Picopad modification: (2024) Miroslav Nemecek
 
 #include "../include.h"
+#include <string.h>
 
 #if PEANUT_GB_HIGH_LCD_ACCURACY
 // compare sprites for quick-sort
@@ -55,8 +56,10 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
 //	if(gb->direct.frame_skip && !gb->display.frame_skip_count)
 //		return;
 
-	u8 lcdc = gb->hram_io[IO_LCDC];
-	u8 ly = gb->hram_io[IO_LY];
+       u8 lcdc = gb->hram_io[IO_LCDC];
+       u8 ly = gb->hram_io[IO_LY];
+       u8 scx = gb->hram_io[IO_SCX];
+       u8 scy = gb->hram_io[IO_SCY];
 
 /*
 	//If interlaced mode is activated, check if we need to draw the current line.
@@ -96,14 +99,9 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
        static u8 pixels[LCD_WIDTH];
        static u8 pixelsPrio[LCD_WIDTH];  // do these pixels have priority over OAM?
 
-       // clear buffers faster using 32-bit writes
-       u32 *p32 = (u32*)pixels;
-       u32 *p32b = (u32*)pixelsPrio;
-       for (int i = 0; i < LCD_WIDTH/4; i++)
-       {
-               p32[i] = 0;
-               p32b[i] = 0;
-       }
+       // clear buffers
+       memset(pixels, 0, sizeof(pixels));
+       memset(pixelsPrio, 0, sizeof(pixelsPrio));
 
 	Bool cgbmode = gb->cgb.cgbMode;
 
@@ -116,7 +114,7 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
 		// Calculate current background line to draw. Constant because
 		// this function draws only this one line each time it is
 		// called.
-		bg_y = ly + gb->hram_io[IO_SCY];
+               bg_y = ly + scy;
 
 		// Get selected background map address for first tile
 		// corresponding to current line.
@@ -132,7 +130,7 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
 		disp_x = LCD_WIDTH - 1;
 
 		// The X coordinate to begin drawing the background at.
-		bg_x = disp_x + gb->hram_io[IO_SCX];
+               bg_x = disp_x + scx;
 
 		// Get tile index for current background tile.
 		idx = gb->vram[bg_map + (bg_x >> 3)];
@@ -179,7 +177,7 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
 			{
 				// fetch next tile
 				px = 0;
-				bg_x = disp_x + gb->hram_io[IO_SCX];
+                               bg_x = disp_x + scx;
 				idx = gb->vram[bg_map + (bg_x >> 3)];
 				idxAtt = gb->vram[bg_map + (bg_x >> 3) + 0x2000];
 
@@ -465,44 +463,49 @@ void FASTCODE NOFLASH(__gb_draw_line)(struct gb_s *gb)
 			t1 >>= shift;
 			t2 >>= shift;
 
-			// @TODO: Put for loop within the to if statements
-			// because the BG priority bit will be the same for
-			// all the pixels in the tile.
-			for(disp_x = start; disp_x != end; disp_x += dir)
-			{
-				u8 c = (t1 & 0x1) | ((t2 & 0x1) << 1);
-				// check transparency / sprite overlap / background overlap
+                       if(cgbmode)
+                       {
+                               for(disp_x = start; disp_x != end; disp_x += dir)
+                               {
+                                       u8 c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+                                       u8 isBackgroundDisabled = c && !(lcdc & LCDC_BG_ENABLE);
+                                       u8 isPixelPriorityNonConflicting = c &&
+                                                       !(pixelsPrio[disp_x] && (pixels[disp_x] & 0x3)) &&
+                                                       !((OF & OBJ_PRIORITY) && (pixels[disp_x] & 0x3));
 
-				if(cgbmode)
-				{
-					u8 isBackgroundDisabled = c && !(lcdc & LCDC_BG_ENABLE);
-					u8 isPixelPriorityNonConflicting = c &&
-							!(pixelsPrio[disp_x] && (pixels[disp_x] & 0x3)) &&
-							!((OF & OBJ_PRIORITY) && (pixels[disp_x] & 0x3));
+                                       if(isBackgroundDisabled || isPixelPriorityNonConflicting)
+                                       {
+                                               // Set pixel colour.
+                                               // add 0x20 to differentiate from BG
+                                               pixels[disp_x] = ((OF & OBJ_CGB_PALETTE) << 2) + c + 0x20;
+                                       }
 
-					if(isBackgroundDisabled || isPixelPriorityNonConflicting)
-					{
-						// Set pixel colour.
-						// add 0x20 to differentiate from BG
-						pixels[disp_x] = ((OF & OBJ_CGB_PALETTE) << 2) + c + 0x20;
-					}
-				}
-				else if(c && !(OF & OBJ_PRIORITY && !((pixels[disp_x] & 0x3) == gb->display.bg_palette[0])))
-				{
-					// Set pixel colour.
-					pixels[disp_x] = (OF & OBJ_PALETTE)
-						? gb->display.sp_palette[c + 4]
-						: gb->display.sp_palette[c];
-					// Set pixel palette (OBJ0 or OBJ1).
-					pixels[disp_x] |= (OF & OBJ_PALETTE);
+                                       t1 = t1 >> 1;
+                                       t2 = t2 >> 1;
+                               }
+                       }
+                       else
+                       {
+                               for(disp_x = start; disp_x != end; disp_x += dir)
+                               {
+                                       u8 c = (t1 & 0x1) | ((t2 & 0x1) << 1);
+                                       if(c && !(OF & OBJ_PRIORITY && !((pixels[disp_x] & 0x3) == gb->display.bg_palette[0])))
+                                       {
+                                               // Set pixel colour.
+                                               pixels[disp_x] = (OF & OBJ_PALETTE)
+                                                       ? gb->display.sp_palette[c + 4]
+                                                       : gb->display.sp_palette[c];
+                                               // Set pixel palette (OBJ0 or OBJ1).
+                                               pixels[disp_x] |= (OF & OBJ_PALETTE);
 
-					// Deselect BG palette.
-					pixels[disp_x] &= ~LCD_PALETTE_BG;
-				}
+                                               // Deselect BG palette.
+                                               pixels[disp_x] &= ~LCD_PALETTE_BG;
+                                       }
 
-				t1 = t1 >> 1;
-				t2 = t2 >> 1;
-			}
+                                       t1 = t1 >> 1;
+                                       t2 = t2 >> 1;
+                               }
+                       }
 		}
 	}
 

@@ -135,191 +135,162 @@ Bool ReadRomErr(const char* msg)
 	}
 }
 
+static u8 FASTCODE NOFLASH(FetchFromFlash)(int page, int off)
+{
+       if (off == 0x3fff) return gameRomLastList[page];
+       if (off >= gameRomSizeList[page]) return gameRomStuffList[page];
+       return gameRom[gameRomOffList[page] + off];
+}
+
+static Bool FASTCODE NOFLASH(LoadCachePage)(struct gb_s *gb, int page)
+{
+       const char* msg;
+       int i, n, n2;
+       u8* d;
+       Bool res;
+       u8 inx;
+       sGB_Cache* c;
+
+       // already exiting
+       if (GB_ReqExit) return False;
+
+       // search free page
+       c = GB_CacheDesc;
+       for (inx = 0; inx < GB_CACHE_NUM; inx++)
+       {
+               if (c->type == GB_CACHETYPE_FREE) break;
+               c++;
+       }
+
+       if (inx == GB_CACHE_NUM)
+       {
+               u32 t = Time();
+               u32 delta, deltabest = 0;
+               int best = 0;
+               c = &GB_CacheDesc[GB_CACHE_NUM-1];
+               for (i = GB_CACHE_NUM-1; i >= 0; i--)
+               {
+                       if (c->type == GB_CACHETYPE_VALID)
+                       {
+                               delta = t - c->last;
+                               if (delta > deltabest)
+                               {
+                                       best = i;
+                                       deltabest = delta;
+                               }
+                       }
+                       c--;
+               }
+
+               inx = (u8)best;
+               c = &GB_CacheDesc[inx];
+               GB_CacheROM[c->rominx] = GB_CACHEINX_INV;
+       }
+       else
+       {
+               c = &GB_CacheDesc[inx];
+       }
+
+       c->type = GB_CACHETYPE_VALID;
+       c->rominx = page;
+       GB_CacheROM[page] = inx;
+
+       u32 romoff = page << GB_CACHE_SHIFT;
+
+       if (inx < GB_CACHEINX_CRAM)
+               d = &CacheBuf[((int)inx << GB_CACHE_SHIFT)];
+       else
+               d = &gbContext.cram[((int)(inx - GB_CACHEINX_CRAM) << GB_CACHE_SHIFT)];
+
+       while (True)
+       {
+               msg = "";
+               n = n2 = 0;
+
+               if (!FileIsOpen(&GB_ROMFile))
+               {
+                       if (!DiskAutoMount())
+                       {
+                               msg = "No SD disk";
+                               goto romerr;
+                       }
+                       if (!SetDir(HomePath))
+                       {
+                               msg = "Invalid directory";
+                               goto romerr;
+                       }
+                       GB_PrepSaveFile(-2);
+                       res = FileOpen(&GB_ROMFile, HomePath);
+                       GB_UnprepSaveFile();
+                       if (!res)
+                       {
+                               msg = "Cannot open file";
+                               goto romerr;
+                       }
+               }
+
+               if (!FileSeek(&GB_ROMFile, romoff))
+               {
+                       msg = "Seek error";
+                       goto romerr;
+               }
+
+               n = gameRomOrig - romoff;
+               if (n > GB_CACHE_SIZE) n = GB_CACHE_SIZE;
+               n2 = FileRead(&GB_ROMFile, d, n);
+               if (n != n2)
+               {
+                       msg = "Read error";
+romerr:
+                       GB_DispMode = GB_DISPMODE_MSG;
+                       res = ReadRomErr(msg);
+                       GB_DispMode = GB_DISPMODE_EMU;
+                       if (!res)
+                       {
+                               GB_ReqExit = True;
+                               return False;
+                       }
+                       FileClose(&GB_ROMFile);
+                       DiskUnmount();
+                       DiskMount();
+               }
+               else break;
+       }
+
+       return True;
+}
+
+static u8 FASTCODE NOFLASH(FetchFromCache)(struct gb_s *gb, const uint_fast32_t addr)
+{
+       int page = addr >> GB_CACHE_SHIFT;
+       if (page >= GB_ROMCACHEMAX) return 0xff;
+       int off = addr & GB_CACHE_MASK;
+       u8 inx = GB_CacheROM[page];
+       if (inx == GB_CACHEINX_INV)
+       {
+               if (!LoadCachePage(gb, page)) return 0xff;
+               inx = GB_CacheROM[page];
+       }
+
+       sGB_Cache* c = &GB_CacheDesc[inx];
+       c->last = Time();
+       if (inx < GB_CACHEINX_CRAM)
+               return CacheBuf[((int)inx << GB_CACHE_SHIFT) + off];
+       else
+               return gbContext.cram[((int)(inx - GB_CACHEINX_CRAM) << GB_CACHE_SHIFT) + off];
+}
+
 // GameBoy ROM read function
 u8 FASTCODE NOFLASH(gbRomRead)(struct gb_s *gb, const uint_fast32_t addr)
 {
-	const char* msg;
-	int i, n, n2;
-	u8* d;
-	Bool res;
+       if (addr >= gameRomOrig) return 0xff;
 
-	// address is out of range
-	if (addr >= gameRomOrig) return 0xff;
+       int page = addr >> 14;
+       int off = addr & 0x3fff;
+       if (page < gameFlashPages)
+               return FetchFromFlash(page, off);
 
-	// get ROM page and offset
-	int page = addr >> 14; // 16 KB per ROM page
-	int off = addr & 0x3fff;
-
-	// page is located at Flash memory
-	if (page < gameFlashPages)
-	{
-		// get last byte of the page
-		if (off == 0x3fff) return gameRomLastList[page];
-
-		// stuff bytes, behind valid data of the page
-		if (off >= gameRomSizeList[page]) return gameRomStuffList[page];
-
-		// valid data of the page
-		return gameRom[gameRomOffList[page] + off];
-	}
-
-	// cache page
-	page = addr >> GB_CACHE_SHIFT; // ROM cache page
-	if (page >= GB_ROMCACHEMAX) return 0xff; // invalid ROM page
-	off = addr & GB_CACHE_MASK; // address offset
-
-	// cache index is not valid
-	u8 inx = GB_CacheROM[page];
-	sGB_Cache* c;
-	if (inx == GB_CACHEINX_INV)
-	{
-		// already exiting
-		if (GB_ReqExit) return 0xff; // request to exit program
-
-		// search free page
-		c = GB_CacheDesc;
-		for (inx = 0; inx < GB_CACHE_NUM; inx++)
-		{
-			// free page?
-			if (c->type == GB_CACHETYPE_FREE) break;
-			c++;
-		}
-
-		// no free page, must free oldest page
-		//  Note: some used page will always be found
-		if (inx == GB_CACHE_NUM)
-		{
-			u32 t = Time();
-			u32 delta;
-			u32 deltabest = 0;
-			i = GB_CACHE_NUM-1;
-			c = &GB_CacheDesc[i];
-			for (; i >= 0; i--)
-			{
-				// used page?
-				if (c->type == GB_CACHETYPE_VALID)
-				{
-					// check delta interval
-					delta = t - c->last;
-					if (delta > deltabest)
-					{
-						inx = (u8)i;
-						deltabest = delta;
-					}
-				}
-				c--;
-			}
-
-			// unuse oldest cache
-			c = &GB_CacheDesc[inx];
-			GB_CacheROM[c->rominx] = GB_CACHEINX_INV;
-		}
-
-		// mark this page as used
-		c->type = GB_CACHETYPE_VALID;
-		c->rominx = page;
-		GB_CacheROM[page] = inx;
-
-		// prepare page offset in the ROM file
-		u32 romoff = page << GB_CACHE_SHIFT;
-
-		// prepare cache page address
-		if (inx < GB_CACHEINX_CRAM) // page is in RAM
-		{
-			d = &CacheBuf[((int)inx << GB_CACHE_SHIFT)];
-		}
-		else
-		{
-			d = &gbContext.cram[((int)(inx - GB_CACHEINX_CRAM) << GB_CACHE_SHIFT)];
-		}
-
-// repeat ROM open
-ROMAGAIN:
-		msg = "";
-		n = 0;
-		n2 = 0;
-
-		// open file
-		if (!FileIsOpen(&GB_ROMFile))
-		{
-			// mount disk
-			if (!DiskAutoMount())
-			{
-				msg = "No SD disk";
-				goto ROMERR;
-			}
-
-			// set directory
-			if (!SetDir(HomePath)) // set directory
-			{
-				msg = "Invalid directory";
-				goto ROMERR;
-			}
-
-			// open file
-			GB_PrepSaveFile(-2); // prepare save filename
-			res = FileOpen(&GB_ROMFile, HomePath); // open file
-			GB_UnprepSaveFile(); // unprepare save filename
-			if (!res)			
-			{
-				msg = "Cannot open file";
-				goto ROMERR;
-			}
-		}
-
-		// seek file
-		if (!FileSeek(&GB_ROMFile, romoff))
-		{
-			msg = "Seek error";
-			goto ROMERR;
-		}
-
-		// read page
-		n = gameRomOrig - romoff;
-		if (n > GB_CACHE_SIZE) n = GB_CACHE_SIZE;
-		n2 = FileRead(&GB_ROMFile, d, n);
-		if (n != n2)
-		{
-			msg = "Read error";
-// ROM read error
-ROMERR:
-			// set message display mode
-			GB_DispMode = GB_DISPMODE_MSG;
-
-			// display message (returns True to repeat)
-			res = ReadRomErr(msg);
-
-			// set emlator display mode
-			GB_DispMode = GB_DISPMODE_EMU;
-
-			// request to exit
-			if (!res)
-			{
-				GB_ReqExit = True;
-				return 0xff;
-			}
-
-			// repeat
-			FileClose(&GB_ROMFile);
-			DiskUnmount(); // unmount disk
-			DiskMount(); // mount disk
-			goto ROMAGAIN;
-		}
-	}
-
-	// cache is now valid, read byte from the cache
-	c = &GB_CacheDesc[inx]; // get cache descriptor
-	c->last = Time(); // time mark
-	if (inx < GB_CACHEINX_CRAM) // page is at RAM
-	{
-		// read byte from RAM
-		return CacheBuf[((int)inx << GB_CACHE_SHIFT) + off];
-	}
-	else
-	{
-		// read byte from CRAM
-		return gbContext.cram[((int)(inx - GB_CACHEINX_CRAM) << GB_CACHE_SHIFT) + off];
-	}
+       return FetchFromCache(gb, addr);
 }
 
 // ----------------------------------------------------------------------------
