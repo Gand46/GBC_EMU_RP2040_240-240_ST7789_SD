@@ -16,6 +16,7 @@ SRC += src/peanut_gb.c
 SRC += src/program.cpp
 SRC += src/emu_gb_menu.c
 SRC += src/emu_gb_msg.c
+SRC += src/scale_box.cpp
 
 # Path to root directory from the project directory (without trailing '/' delimiter)
 PICO_ROOT_PATH = ../../..
