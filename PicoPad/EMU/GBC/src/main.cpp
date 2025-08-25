@@ -44,7 +44,7 @@ struct gb_s gbContext;
 // game title CRC
 u16 TitleCrc;		// CRC16A of game title, game code, support code and maker code, address 0x0134..0x0145
 u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
-// scaling lookup tables
+// lookup tables for tile cadence scaling (160x144 -> 240x240)
 u8 lut_x[WIDTH];
 u8 lut_y[HEIGHT];
 
@@ -805,7 +805,7 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                         if (GB_DispMode == GB_DISPMODE_MSG) return;
                 }
 
-                ys = lut_y[y];
+                ys = lut_y[y];                          // current source line
                 s = &gbContext.framebuf[rinx*LCD_WIDTH];
 
                 DispStartImg(0, WIDTH, y, y+1);
@@ -819,13 +819,13 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                                if (x < 16)
                                        linebuf[x] = s2[x];
                                else
-                                       linebuf[x] = s[lut_x[x]];
+                                       linebuf[x] = s[lut_x[x]]; // horizontal scaling
                        }
                }
                else
 #endif
                {
-                       for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
+                       for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]]; // horizontal scaling
                }
 
                 DispWriteDataDMA(linebuf, WIDTH*2);
@@ -833,7 +833,7 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                 DispStopImg();
 
                 int nexty = y + 1;
-                ys2 = (nexty < HEIGHT) ? lut_y[nexty] : LCD_HEIGHT;
+                ys2 = (nexty < HEIGHT) ? lut_y[nexty] : LCD_HEIGHT; // next source line
 
                 if (ys != ys2)
                 {
@@ -1082,8 +1082,36 @@ void GB_Setup()
 
 	// clear context
 	memset(&gbContext, 0, sizeof(gbContext));
-        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+    // Build lookup tables for deterministic tile-based scaling (8x8 -> 12x13)
+    // Horizontal: expand 20 tiles of 8 columns to 240 pixels with pattern 2,1,2,1,2,1,2,1
+    int pos = 0;
+    static const u8 dupx[8] = {2,1,2,1,2,1,2,1};
+    for (int t = 0; t < 20; t++) {
+        for (int i = 0; i < 8; i++) {
+            int src = t*8 + i;
+            for (int r = 0; r < dupx[i]; r++) {
+                lut_x[pos++] = src;
+            }
+        }
+    }
+
+    // Vertical: expand 18 tiles of 8 rows to 234 pixels and distribute 6 extra lines
+    static const u8 dupy[8] = {2,2,1,2,1,2,1,2};
+    static const u8 extra_tiles[6] = {2,5,8,11,14,17};
+    pos = 0;
+    int extra = 0;
+    for (int t = 0; t < 18; t++) {
+        for (int i = 0; i < 8; i++) {
+            int src = t*8 + i;
+            for (int r = 0; r < dupy[i]; r++) {
+                lut_y[pos++] = src;
+            }
+        }
+        if (extra < 6 && t == extra_tiles[extra]) {
+            lut_y[pos++] = t*8 + 7; // duplicate last line of tile
+            extra++;
+        }
+    }
 
 	// select colorization palette
 	gbSelectColorizationPalette();
