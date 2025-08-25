@@ -47,6 +47,8 @@ u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
 // scaling lookup tables
 u8 lut_x[WIDTH];
 u8 lut_y[HEIGHT];
+u8 lut_x_frac[WIDTH];     // fractional part of X scaling
+u8 lut_y_frac[HEIGHT];    // fractional part of Y scaling
 
 
 #if DEB_FPS			// debug display FPS
@@ -748,12 +750,46 @@ void gbSelectColorizationPalette()
 // Error handler function
 void gbErrorHandler(struct gb_s *gb, const enum gb_error_e gb_err, const u16 addr) { reset_usb_boot(0, 0); }
 
+// bilinear interpolation of RGB565 pixels using 8-bit fixed-point weights
+static inline u16 FASTCODE NOFLASH(bilerp)(const u16* row0, const u16* row1,
+                                         int sx, u8 fx, u8 fy)
+{
+       int sx2 = (sx + 1 < LCD_WIDTH) ? sx + 1 : sx;
+       u16 p00 = row0[sx];
+       u16 p10 = row0[sx2];
+       u16 p01 = row1[sx];
+       u16 p11 = row1[sx2];
+
+       u32 w0 = 256 - fx;
+       u32 w1 = fx;
+
+       u32 r0 = ((p00 >> 11) * w0 + (p10 >> 11) * w1) >> 8;
+       u32 g0 = (((p00 >> 5) & 0x3f) * w0 + ((p10 >> 5) & 0x3f) * w1) >> 8;
+       u32 b0 = ((p00 & 0x1f) * w0 + (p10 & 0x1f) * w1) >> 8;
+
+       u32 r1 = ((p01 >> 11) * w0 + (p11 >> 11) * w1) >> 8;
+       u32 g1 = (((p01 >> 5) & 0x3f) * w0 + ((p11 >> 5) & 0x3f) * w1) >> 8;
+       u32 b1 = ((p01 & 0x1f) * w0 + (p11 & 0x1f) * w1) >> 8;
+
+       u32 wy0 = 256 - fy;
+       u32 wy1 = fy;
+
+       u32 r = (r0 * wy0 + r1 * wy1) >> 8;
+       u32 g = (g0 * wy0 + g1 * wy1) >> 8;
+       u32 b = (b0 * wy0 + b1 * wy1) >> 8;
+
+       return (r << 11) | (g << 5) | b;
+}
+
 // draw one line from frame buffer
 void FASTCODE NOFLASH(core1DrawFrame)()
 {
-        int x, y, ys, ys2, rinx;
-        u16* s;
-        u16 linebuf[WIDTH];
+       int x, y, ys, ys2, rinx, rinx2, sx;
+       u8 fx, fy;
+       u16 *row0, *row1;
+       u16 linebuf[WIDTH];
+       u16 src0[LCD_WIDTH];
+       u16 src1[LCD_WIDTH];
 
 #if DEB_FPS                     // debug display FPS
         u16 buf[16*16];
@@ -778,12 +814,14 @@ void FASTCODE NOFLASH(core1DrawFrame)()
         }
 #endif
 
-        // wait for first scanline (without opening output to LCD)
-        rinx = gbContext.frame_read;
-        while (rinx == gbContext.frame_write)
-        {
-                if (GB_DispMode == GB_DISPMODE_MSG) return;
-        }
+       // wait for first scanlines (without opening output to LCD)
+       rinx = gbContext.frame_read;
+       rinx2 = rinx + 1;
+       if (rinx2 >= LCD_FRAMEHEIGHT) rinx2 = 0;
+       while ((rinx == gbContext.frame_write) || (rinx2 == gbContext.frame_write))
+       {
+               if (GB_DispMode == GB_DISPMODE_MSG) return;
+       }
 
         // do screenshot
         y = gbContext.frame_rline;
@@ -798,35 +836,51 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 
         for (; y < HEIGHT; )
         {
-                // wait for scan line to be ready
-                rinx = gbContext.frame_read;
-                while (rinx == gbContext.frame_write)
-                {
-                        if (GB_DispMode == GB_DISPMODE_MSG) return;
-                }
+               ys = lut_y[y];
+               fy = lut_y_frac[y];
 
-                ys = lut_y[y];
-                s = &gbContext.framebuf[rinx*LCD_WIDTH];
+               rinx = gbContext.frame_read;
+               rinx2 = rinx + 1;
+               if (rinx2 >= LCD_FRAMEHEIGHT) rinx2 = 0;
+               while ((rinx == gbContext.frame_write) ||
+                      ((ys < LCD_HEIGHT-1) && (rinx2 == gbContext.frame_write)))
+               {
+                       if (GB_DispMode == GB_DISPMODE_MSG) return;
+               }
 
-                DispStartImg(0, WIDTH, y, y+1);
+               row0 = &gbContext.framebuf[rinx*LCD_WIDTH];
+               row1 = (ys < LCD_HEIGHT-1) ? &gbContext.framebuf[rinx2*LCD_WIDTH] : row0;
+
+               memcpy(src0, row0, LCD_WIDTH*2);
+               memcpy(src1, row1, LCD_WIDTH*2);
+
+               DispStartImg(0, WIDTH, y, y+1);
 
 #if DEB_FPS                     // debug display FPS
-               if (y < 16)
-               {
-                       u16* s2 = &buf[16*y];
-                       for (x = 0; x < WIDTH; x++)
-                       {
-                               if (x < 16)
-                                       linebuf[x] = s2[x];
-                               else
-                                       linebuf[x] = s[lut_x[x]];
-                       }
-               }
-               else
+              if (y < 16)
+              {
+                      u16* s2 = &buf[16*y];
+                      for (x = 0; x < WIDTH; x++)
+                      {
+                              if (x < 16)
+                                      linebuf[x] = s2[x];
+                              else {
+                                      sx = lut_x[x];
+                                      fx = lut_x_frac[x];
+                                      linebuf[x] = bilerp(src0, src1, sx, fx, fy);
+                              }
+                      }
+              }
+              else
 #endif
-               {
-                       for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
-               }
+              {
+                      for (x = 0; x < WIDTH; x++)
+                      {
+                              sx = lut_x[x];
+                              fx = lut_x_frac[x];
+                              linebuf[x] = bilerp(src0, src1, sx, fx, fy);
+                      }
+              }
 
                 DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
@@ -1081,9 +1135,19 @@ void GB_Setup()
 	GB_ReqExit = False; // request to exit program
 
 	// clear context
-	memset(&gbContext, 0, sizeof(gbContext));
-        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+       memset(&gbContext, 0, sizeof(gbContext));
+       for (int i = 0; i < WIDTH; i++)
+       {
+               int t = (i * LCD_WIDTH * 256) / WIDTH;
+               lut_x[i] = t >> 8;
+               lut_x_frac[i] = t & 0xff;
+       }
+       for (int j = 0; j < HEIGHT; j++)
+       {
+               int t = (j * LCD_HEIGHT * 256) / HEIGHT;
+               lut_y[j] = t >> 8;
+               lut_y_frac[j] = t & 0xff;
+       }
 
 	// select colorization palette
 	gbSelectColorizationPalette();
