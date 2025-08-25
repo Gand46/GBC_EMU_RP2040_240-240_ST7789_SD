@@ -24,6 +24,8 @@
 #define WIDTH                   240     // display width
 #define HEIGHT                  240     // display height
 #define USE_BILINEAR_SCALE      1       // 1=use simplified bilinear interpolation
+#define BILINEAR_DBLBUF         0       // 1=double line buffer with DMA/PIO
+#define BILINEAR_ECO_MODE       0       // 1=skip vertical blends for speed
 
 // Frame buffer and font settings
 #define USE_FRAMEBUF            0               // do not use pre-defined Frame buffer

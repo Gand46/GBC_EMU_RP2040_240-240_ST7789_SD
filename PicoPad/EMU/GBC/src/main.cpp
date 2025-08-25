@@ -44,27 +44,127 @@ struct gb_s gbContext;
 // game title CRC
 u16 TitleCrc;		// CRC16A of game title, game code, support code and maker code, address 0x0134..0x0145
 u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
-// scaling lookup tables
+// scaling lookup tables (used when bilinear scaling is disabled)
+#if !USE_BILINEAR_SCALE
 u8 lut_x[WIDTH];
 u8 lut_y[HEIGHT];
-#if USE_BILINEAR_SCALE
-u8 lut_x_frac[WIDTH];
-u8 lut_y_frac[HEIGHT];
-
-static inline u16 mix565(u16 a, u16 b, u8 w)
-{
-    u32 rb = (a & 0xF81F) * (256 - w) + (b & 0xF81F) * w;
-    u32 g  = (a & 0x07E0) * (256 - w) + (b & 0x07E0) * w;
-    rb = (rb >> 8) & 0xF81F;
-    g  = (g >> 8) & 0x07E0;
-    return (u16)(rb | g);
-}
-
-static inline u16 bilerp565(u16 p00, u16 p10, u16 p01, u16 p11, u8 fx, u8 fy)
-{
-    return mix565(mix565(p00, p10, fx), mix565(p01, p11, fx), fy);
-}
 #endif
+
+#if USE_BILINEAR_SCALE
+
+// optional performance switches
+#ifndef BILINEAR_DBLBUF
+#define BILINEAR_DBLBUF     0   // 1=use double buffer per line with DMA/PIO
+#endif
+#ifndef BILINEAR_ECO_MODE
+#define BILINEAR_ECO_MODE   0   // 1=skip vertical blends for higher speed
+#endif
+
+// fast average of two RGB565 pixels
+static inline u16 rgb565_avg(u16 a, u16 b)
+{
+    return (((a ^ b) >> 1) + (a & b)) & 0xF7DE;
+}
+
+// horizontal scale 160->240 using pattern [A,B] -> [A,avg(A,B),B]
+static void hscale_2to3_rgb565(const u16* src, u16* dst)
+{
+    for (int x = 0; x < LCD_WIDTH; x += 2)
+    {
+        u16 a = src[x];
+        u16 b = src[x + 1];
+        *dst++ = a;
+        *dst++ = rgb565_avg(a, b);
+        *dst++ = b;
+    }
+}
+
+// vertical blend of two 240‑pixel lines
+static void vblend_line_rgb565(u16* dst, const u16* a, const u16* b)
+{
+#if BILINEAR_ECO_MODE
+    // eco mode: skip blend, copy next line
+    memcpy(dst, b, WIDTH * sizeof(u16));
+#else
+    for (int i = 0; i < WIDTH; i++) dst[i] = rgb565_avg(a[i], b[i]);
+#endif
+}
+
+// set address window and push pixels helper
+static inline void Disp_SetAddrWindow(u16 x, u16 y, u16 w, u16 h)
+{
+    DispStartImg(x, x + w, y, y + h);
+}
+
+static inline void Disp_PushPixels(const u16* data, int len)
+{
+    DispWriteDataDMA(data, len * 2);
+    while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+}
+
+// render full frame using light-weight separable bilinear scaling
+void FASTCODE NOFLASH(render_gbc_fullscreen_bilin_light)()
+{
+#if BILINEAR_DBLBUF
+    u16 linebuf[4][WIDTH];
+#else
+    u16 linebuf[3][WIDTH];
+#endif
+    u16 blend[WIDTH];
+
+    int rinx = gbContext.frame_read;
+
+    // wait for first available line
+    while (rinx == gbContext.frame_write)
+    {
+        if (GB_DispMode == GB_DISPMODE_MSG) return;
+    }
+
+    Disp_SetAddrWindow(0, 0, WIDTH, HEIGHT);
+
+    for (int sy = 0; sy < LCD_HEIGHT; sy += 3)
+    {
+        // load and scale three source lines
+        for (int i = 0; i < 3; i++)
+        {
+            while (rinx == gbContext.frame_write)
+            {
+                if (GB_DispMode == GB_DISPMODE_MSG)
+                {
+                    DispStopImg();
+                    return;
+                }
+            }
+
+            const u16* s = &gbContext.framebuf[rinx * LCD_WIDTH];
+            hscale_2to3_rgb565(s, linebuf[i]);
+
+            rinx++;
+            if (rinx >= LCD_FRAMEHEIGHT) rinx = 0;
+            gbContext.frame_read = rinx;
+        }
+
+#if BILINEAR_ECO_MODE
+        Disp_PushPixels(linebuf[0], WIDTH);
+        Disp_PushPixels(linebuf[1], WIDTH);
+        Disp_PushPixels(linebuf[1], WIDTH);
+        Disp_PushPixels(linebuf[2], WIDTH);
+        Disp_PushPixels(linebuf[2], WIDTH);
+#else
+        Disp_PushPixels(linebuf[0], WIDTH);
+        vblend_line_rgb565(blend, linebuf[0], linebuf[1]);
+        Disp_PushPixels(blend, WIDTH);
+        Disp_PushPixels(linebuf[1], WIDTH);
+        vblend_line_rgb565(blend, linebuf[1], linebuf[2]);
+        Disp_PushPixels(blend, WIDTH);
+        Disp_PushPixels(linebuf[2], WIDTH);
+#endif
+    }
+
+    DispStopImg();
+}
+
+#endif // USE_BILINEAR_SCALE
 
 
 #if DEB_FPS			// debug display FPS
@@ -766,61 +866,24 @@ void gbSelectColorizationPalette()
 // Error handler function
 void gbErrorHandler(struct gb_s *gb, const enum gb_error_e gb_err, const u16 addr) { reset_usb_boot(0, 0); }
 
-// draw one line from frame buffer
+// draw frame to display
 void FASTCODE NOFLASH(core1DrawFrame)()
 {
+#if USE_BILINEAR_SCALE
+        render_gbc_fullscreen_bilin_light();
+#else
         int x, y, ys, ys2, rinx;
         u16* s0;
-#if USE_BILINEAR_SCALE
-        u16* s1;
-        u8 fy;
-#endif
         u16 linebuf[WIDTH];
 
-#if DEB_FPS                     // debug display FPS
-        u16 buf[16*16];
-        u8 d1 = DebFps/10 + '0';
-        u8 d2 = (DebFps % 10) + '0';
-        u16* d = buf;
-        for (y = 0; y < 16; y++)
-        {
-                u8 ch = FontBold8x16[d1 + y*256];
-                for (x = 8; x > 0; x--)
-                {
-                        *d++ = (ch & 0x80) ? DebFpsCol : COL_BLACK;
-                        ch <<= 1;
-                }
-
-                ch = FontBold8x16[d2 + y*256];
-                for (x = 8; x > 0; x--)
-                {
-                        *d++ = (ch & 0x80) ? DebFpsCol : COL_BLACK;
-                        ch <<= 1;
-                }
-        }
-#endif
-
-        // wait for first scanline (without opening output to LCD)
         rinx = gbContext.frame_read;
         while (rinx == gbContext.frame_write)
         {
                 if (GB_DispMode == GB_DISPMODE_MSG) return;
         }
 
-        // do screenshot
-        y = gbContext.frame_rline;
-        dmb();
-        if (DoEmuScreenShotReq && (y == 0))
+        for (y = 0; y < HEIGHT; )
         {
-                DoEmuScreenShot = True; // request to do emulator screenshot
-                dmb();
-                DoEmuScreenShotReq = False;
-                dmb();
-        }
-
-        for (; y < HEIGHT; )
-        {
-                // wait for scan line to be ready
                 rinx = gbContext.frame_read;
                 while (rinx == gbContext.frame_write)
                 {
@@ -829,78 +892,9 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 
                 ys = lut_y[y];
                 s0 = &gbContext.framebuf[rinx*LCD_WIDTH];
-#if USE_BILINEAR_SCALE
-                fy = lut_y_frac[y];
-                int rinx_next = rinx;
-                if (ys < LCD_HEIGHT-1)
-                {
-                        rinx_next++;
-                        if (rinx_next >= LCD_FRAMEHEIGHT) rinx_next = 0;
-                        while (rinx_next == gbContext.frame_write)
-                        {
-                                if (GB_DispMode == GB_DISPMODE_MSG) return;
-                        }
-                        s1 = &gbContext.framebuf[rinx_next*LCD_WIDTH];
-                }
-                else
-                {
-                        s1 = s0;
-                        fy = 0;
-                }
-#endif
 
                 DispStartImg(0, WIDTH, y, y+1);
-
-#if DEB_FPS                     // debug display FPS
-                if (y < 16)
-                {
-                        u16* s2 = &buf[16*y];
-                        for (x = 0; x < WIDTH; x++)
-                        {
-                                u16 pix;
-                                if (x < 16)
-                                {
-                                        pix = s2[x];
-                                }
-                                else
-                                {
-#if USE_BILINEAR_SCALE
-                                        int sx = lut_x[x];
-                                        int sx1 = (sx < LCD_WIDTH-1) ? sx+1 : sx;
-                                        u16 p00 = s0[sx];
-                                        u16 p10 = s0[sx1];
-                                        u16 p01 = s1[sx];
-                                        u16 p11 = s1[sx1];
-                                        pix = bilerp565(p00, p10, p01, p11, lut_x_frac[x], fy);
-#else
-                                        pix = s0[lut_x[x]];
-#endif
-                                }
-                                linebuf[x] = pix;
-                        }
-                }
-                else
-#endif
-                {
-#if USE_BILINEAR_SCALE
-                        for (x = 0; x < WIDTH; x++)
-                        {
-                                int sx = lut_x[x];
-                                int sx1 = (sx < LCD_WIDTH-1) ? sx+1 : sx;
-                                u16 p00 = s0[sx];
-                                u16 p10 = s0[sx1];
-                                u16 p01 = s1[sx];
-                                u16 p11 = s1[sx1];
-                                linebuf[x] = bilerp565(p00, p10, p01, p11, lut_x_frac[x], fy);
-                        }
-#else
-                        for (x = 0; x < WIDTH; x++)
-                        {
-                                linebuf[x] = s0[lut_x[x]];
-                        }
-#endif
-                }
-
+                for (x = 0; x < WIDTH; x++) linebuf[x] = s0[lut_x[x]];
                 DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
                 DispStopImg();
@@ -910,27 +904,14 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 
                 if (ys != ys2)
                 {
-                        dmb();
-
                         rinx++;
                         if (rinx >= LCD_FRAMEHEIGHT) rinx = 0;
                         gbContext.frame_read = rinx;
-
-                        dmb();
                 }
 
-                // increase Y
                 y = nexty;
-                rinx = gbContext.frame_rline + 1;
-                if (rinx >= HEIGHT) rinx = 0;
-                gbContext.frame_rline = rinx;
-
-                // slow down FPS to speed up emulation
-                u32 del = DelayLineUs;
-                u32 line = LastLineUs;
-                while ((u32)(Time() - line) < del) {}
-                LastLineUs = Time();
         }
+#endif
 }
 
 // PWM audio interrupt handler
@@ -1155,22 +1136,7 @@ void GB_Setup()
 
 	// clear context
 	memset(&gbContext, 0, sizeof(gbContext));
-#if USE_BILINEAR_SCALE
-       for (int i = 0; i < WIDTH; i++)
-       {
-               int t = i * LCD_WIDTH;
-               int sx = t / WIDTH;
-               lut_x[i] = sx;
-               lut_x_frac[i] = (sx < LCD_WIDTH-1) ? ((t % WIDTH) * 256 / WIDTH) : 0;
-       }
-       for (int j = 0; j < HEIGHT; j++)
-       {
-               int t = j * LCD_HEIGHT;
-               int sy = t / HEIGHT;
-               lut_y[j] = sy;
-               lut_y_frac[j] = (sy < LCD_HEIGHT-1) ? ((t % HEIGHT) * 256 / HEIGHT) : 0;
-       }
-#else
+#if !USE_BILINEAR_SCALE
        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
 #endif
