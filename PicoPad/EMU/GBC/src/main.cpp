@@ -93,7 +93,7 @@ static void horz_2to3_bilinear_pf(const uint16_t* __restrict src, uint16_t* __re
 {
     const uint8_t W[3] = {213, 128, 43}; // weight of second pixel per phase
     int dx = 0;
-    for (int sx0 = 0; sx0 < 159; sx0++)
+    for (int sx0 = 0; sx0 < 160 - 1; sx0 += 2)
     {
         uint16_t s0 = src[sx0];
         uint16_t s1 = src[sx0 + 1];
@@ -102,10 +102,11 @@ static void horz_2to3_bilinear_pf(const uint16_t* __restrict src, uint16_t* __re
         dst_line[dx++] = lerp565_no_mul(s0, s1, W[2]);
     }
 
+    // clamp last source pixel across the remaining outputs
     uint16_t last = src[159];
-    dst_line[dx++] = last;
-    dst_line[dx++] = last;
-    dst_line[dx++] = last;
+    dst_line[237] = last;
+    dst_line[238] = last;
+    dst_line[239] = last;
 }
 
 // render full frame using deterministic poly-phase bilinear scaling
