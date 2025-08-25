@@ -52,79 +52,87 @@ u8 lut_y[HEIGHT];
 
 #if USE_BILINEAR_SCALE
 
-// optional performance switches
-#ifndef BILINEAR_DBLBUF
-#define BILINEAR_DBLBUF     0   // 1=use double buffer per line with DMA/PIO
-#endif
-#ifndef BILINEAR_ECO_MODE
-#define BILINEAR_ECO_MODE   0   // 1=skip vertical blends for higher speed
-#endif
+static uint8_t mul5[256][32];
+static uint8_t mul6[256][64];
 
-// fast average of two RGB565 pixels
-static inline u16 rgb565_avg(u16 a, u16 b)
+// initialize multiplication look-up tables for 5- and 6-bit channels
+static void mul_luts_init(void)
 {
-    return (((a ^ b) >> 1) + (a & b)) & 0xF7DE;
-}
-
-// horizontal scale 160->240 using pattern [A,B] -> [A,avg(A,B),B]
-static void hscale_2to3_rgb565(const u16* src, u16* dst)
-{
-    for (int x = 0; x < LCD_WIDTH; x += 2)
+    for (int w = 0; w < 256; w++)
     {
-        u16 a = src[x];
-        u16 b = src[x + 1];
-        *dst++ = a;
-        *dst++ = rgb565_avg(a, b);
-        *dst++ = b;
+        for (int v = 0; v < 32; v++)
+        {
+            uint8_t v8 = (v << 3) | (v >> 2);          // expand 5 -> 8 bits
+            mul5[w][v] = (uint8_t)((w * v8 + 128) >> 8);
+        }
+        for (int v = 0; v < 64; v++)
+        {
+            uint8_t v8 = (v << 2) | (v >> 4);          // expand 6 -> 8 bits
+            mul6[w][v] = (uint8_t)((w * v8 + 128) >> 8);
+        }
     }
 }
 
-// vertical blend of two 240‑pixel lines
-static void vblend_line_rgb565(u16* dst, const u16* a, const u16* b)
+// mix two RGB565 pixels using precomputed weights (no multiplications)
+static inline uint16_t lerp565_no_mul(uint16_t a, uint16_t b, uint8_t w1)
 {
-#if BILINEAR_ECO_MODE
-    // eco mode: skip blend, copy next line
-    memcpy(dst, b, WIDTH * sizeof(u16));
-#else
-    for (int i = 0; i < WIDTH; i++) dst[i] = rgb565_avg(a[i], b[i]);
-#endif
+    uint8_t w0 = 255 - w1;
+    uint8_t aR = (a >> 11) & 0x1F, aG = (a >> 5) & 0x3F, aB = a & 0x1F;
+    uint8_t bR = (b >> 11) & 0x1F, bG = (b >> 5) & 0x3F, bB = b & 0x1F;
+    uint8_t r8 = mul5[w0][aR] + mul5[w1][bR];
+    uint8_t g8 = mul6[w0][aG] + mul6[w1][bG];
+    uint8_t b8 = mul5[w0][aB] + mul5[w1][bB];
+    uint16_t R5 = (r8 + 4) >> 3;
+    uint16_t G6 = (g8 + 2) >> 2;
+    uint16_t B5 = (b8 + 4) >> 3;
+    return (R5 << 11) | (G6 << 5) | B5;
 }
 
-// set address window and push pixels helper
-static inline void Disp_SetAddrWindow(u16 x, u16 y, u16 w, u16 h)
+// horizontal 2->3 bilinear scaling with fixed weights per phase
+static void horz_2to3_bilinear_pf(const uint16_t* __restrict src, uint16_t* __restrict dst_line)
 {
-    DispStartImg(x, x + w, y, y + h);
+    const uint8_t W[3] = {213, 128, 43}; // weight of second pixel per phase
+    int dx = 0;
+    for (int sx0 = 0; sx0 < 159; sx0++)
+    {
+        uint16_t s0 = src[sx0];
+        uint16_t s1 = src[sx0 + 1];
+        dst_line[dx++] = lerp565_no_mul(s0, s1, W[0]);
+        dst_line[dx++] = lerp565_no_mul(s0, s1, W[1]);
+        dst_line[dx++] = lerp565_no_mul(s0, s1, W[2]);
+    }
+
+    uint16_t last = src[159];
+    dst_line[dx++] = last;
+    dst_line[dx++] = last;
+    dst_line[dx++] = last;
 }
 
-static inline void Disp_PushPixels(const u16* data, int len)
-{
-    DispWriteDataDMA(data, len * 2);
-    while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
-}
-
-// render full frame using light-weight separable bilinear scaling
+// render full frame using deterministic poly-phase bilinear scaling
 void FASTCODE NOFLASH(render_gbc_fullscreen_bilin_light)()
 {
-#if BILINEAR_DBLBUF
-    u16 linebuf[4][WIDTH];
-#else
-    u16 linebuf[3][WIDTH];
-#endif
-    u16 blend[WIDTH];
+    static bool luts_ready = false;
+    if (!luts_ready)
+    {
+        mul_luts_init();
+        luts_ready = true;
+    }
+
+    static const uint8_t WY1[5] = {204, 102, 0, 153, 51};
+    uint16_t linebuf[3][WIDTH];
+    uint16_t mixbuf[WIDTH];
 
     int rinx = gbContext.frame_read;
-
-    // wait for first available line
     while (rinx == gbContext.frame_write)
     {
         if (GB_DispMode == GB_DISPMODE_MSG) return;
     }
 
-    Disp_SetAddrWindow(0, 0, WIDTH, HEIGHT);
+    DispStartImg(0, WIDTH, 0, HEIGHT);
 
     for (int sy = 0; sy < LCD_HEIGHT; sy += 3)
     {
-        // load and scale three source lines
+        // load and horizontally scale three source lines
         for (int i = 0; i < 3; i++)
         {
             while (rinx == gbContext.frame_write)
@@ -136,29 +144,40 @@ void FASTCODE NOFLASH(render_gbc_fullscreen_bilin_light)()
                 }
             }
 
-            const u16* s = &gbContext.framebuf[rinx * LCD_WIDTH];
-            hscale_2to3_rgb565(s, linebuf[i]);
+            const uint16_t* s = &gbContext.framebuf[rinx * LCD_WIDTH];
+            horz_2to3_bilinear_pf(s, linebuf[i]);
 
-            rinx++;
-            if (rinx >= LCD_FRAMEHEIGHT) rinx = 0;
+            rinx++; if (rinx >= LCD_FRAMEHEIGHT) rinx = 0;
             gbContext.frame_read = rinx;
         }
 
-#if BILINEAR_ECO_MODE
-        Disp_PushPixels(linebuf[0], WIDTH);
-        Disp_PushPixels(linebuf[1], WIDTH);
-        Disp_PushPixels(linebuf[1], WIDTH);
-        Disp_PushPixels(linebuf[2], WIDTH);
-        Disp_PushPixels(linebuf[2], WIDTH);
-#else
-        Disp_PushPixels(linebuf[0], WIDTH);
-        vblend_line_rgb565(blend, linebuf[0], linebuf[1]);
-        Disp_PushPixels(blend, WIDTH);
-        Disp_PushPixels(linebuf[1], WIDTH);
-        vblend_line_rgb565(blend, linebuf[1], linebuf[2]);
-        Disp_PushPixels(blend, WIDTH);
-        Disp_PushPixels(linebuf[2], WIDTH);
-#endif
+        // phase 0
+        for (int x = 0; x < WIDTH; x++)
+            mixbuf[x] = lerp565_no_mul(linebuf[0][x], linebuf[1][x], WY1[0]);
+        DispWriteDataDMA(mixbuf, WIDTH * 2);
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+
+        // phase 1
+        for (int x = 0; x < WIDTH; x++)
+            mixbuf[x] = lerp565_no_mul(linebuf[0][x], linebuf[1][x], WY1[1]);
+        DispWriteDataDMA(mixbuf, WIDTH * 2);
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+
+        // phase 2 - copy middle line
+        DispWriteDataDMA(linebuf[1], WIDTH * 2);
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+
+        // phase 3
+        for (int x = 0; x < WIDTH; x++)
+            mixbuf[x] = lerp565_no_mul(linebuf[1][x], linebuf[2][x], WY1[3]);
+        DispWriteDataDMA(mixbuf, WIDTH * 2);
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+
+        // phase 4
+        for (int x = 0; x < WIDTH; x++)
+            mixbuf[x] = lerp565_no_mul(linebuf[1][x], linebuf[2][x], WY1[4]);
+        DispWriteDataDMA(mixbuf, WIDTH * 2);
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
     }
 
     DispStopImg();
