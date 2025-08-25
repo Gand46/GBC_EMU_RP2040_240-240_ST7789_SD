@@ -9,6 +9,13 @@
 
 #define EMU_PWMTOP	4095	// PWM sound top (period = EMU_PWMTOP + 1 = 4096)
 #define EMU_PWMCLOCK	(AUDIO_SAMPLE_RATE*(EMU_PWMTOP+1)) // PWM clock (= 32768*4096 = 134 217 728)
+// GPIO used for performance measurement
+#define PERF_GPIO 2
+
+// fallback strategies when frame rate is low
+#define FRAME_SKIP 1
+#define LOW_POWER_NEAREST 0
+
 
 #define DISP_MINFPS	8	// minimal required display FPS (limit rendering to speed-up program emulation)
 #define DISP_MAXFPS	22	// maximal required display FPS (limit rendering to speed-up program emulation)
@@ -44,9 +51,18 @@ struct gb_s gbContext;
 // game title CRC
 u16 TitleCrc;		// CRC16A of game title, game code, support code and maker code, address 0x0134..0x0145
 u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
-// scaling lookup tables
-u8 lut_x[WIDTH];
-u8 lut_y[HEIGHT];
+// scaling lookup tables precomputed for bilinear fullscreen scaler
+u16 idx_x0[WIDTH], idx_x1[WIDTH];     // horizontal source indices
+u16 idx_y0[HEIGHT], idx_y1[HEIGHT];   // vertical source indices
+u8  lut_x_w1[WIDTH], lut_y_w1[HEIGHT]; // interpolation weights
+
+// multiplication lookup tables to avoid per-pixel multiplies
+ALIGNED u16 mul5[256][32];            // 5-bit component products
+ALIGNED u16 mul6[256][64];            // 6-bit component products
+
+// line buffers in separate SRAM banks
+__scratch_x("scaler") static u16 hline[LCD_HEIGHT][WIDTH];
+__scratch_y("scaler") static u16 dstbuf[2][WIDTH];
 
 
 #if DEB_FPS			// debug display FPS
@@ -64,6 +80,65 @@ u16 SndBuf[AUDIO_SAMPBUF*2];
 u16 SndBuf[AUDIO_SAMPBUF];
 #endif
 int SndBufInx = AUDIO_SAMPBUF;
+
+// build lookup tables for scaler
+static void BuildScalerTables(void)
+{
+    int base;
+    // horizontal indices and weights (2 -> 3)
+    base = 0;
+    for (int x = 0; x < WIDTH; x++) {
+        int phase = x % 3;
+        if (phase == 0) {
+            idx_x0[x] = base;
+            idx_x1[x] = base + 1;
+            lut_x_w1[x] = 213; // weight for left pixel
+        } else if (phase == 1) {
+            idx_x0[x] = base;
+            idx_x1[x] = base + 1;
+            lut_x_w1[x] = 128;
+        } else {
+            idx_x0[x] = base + 1;
+            idx_x1[x] = (base + 2 < LCD_WIDTH) ? base + 2 : LCD_WIDTH - 1;
+            lut_x_w1[x] = 43;
+            base += 2;
+        }
+    }
+
+    // vertical indices and weights (3 -> 5)
+    base = 0;
+    for (int y = 0; y < HEIGHT; y++) {
+        int phase = y % 5;
+        if (phase == 0) {
+            idx_y0[y] = base;
+            idx_y1[y] = base + 1;
+            lut_y_w1[y] = 204;
+        } else if (phase == 1) {
+            idx_y0[y] = base;
+            idx_y1[y] = base + 1;
+            lut_y_w1[y] = 102;
+        } else if (phase == 2) {
+            idx_y0[y] = base + 1;
+            idx_y1[y] = base + 2;
+            lut_y_w1[y] = 0;
+        } else if (phase == 3) {
+            idx_y0[y] = base + 1;
+            idx_y1[y] = base + 2;
+            lut_y_w1[y] = 153;
+        } else {
+            idx_y0[y] = base + 2;
+            idx_y1[y] = (base + 3 < LCD_HEIGHT) ? base + 3 : LCD_HEIGHT - 1;
+            lut_y_w1[y] = 51;
+            base += 3;
+        }
+    }
+
+    // multiplication tables
+    for (int w = 0; w < 256; w++) {
+        for (int c = 0; c < 32; c++) mul5[w][c] = w * c;
+        for (int c = 0; c < 64; c++) mul6[w][c] = w * c;
+    }
+}
 
 // ----------------------------------------------------------------------------
 //                               ROM and cache
@@ -748,116 +823,70 @@ void gbSelectColorizationPalette()
 // Error handler function
 void gbErrorHandler(struct gb_s *gb, const enum gb_error_e gb_err, const u16 addr) { reset_usb_boot(0, 0); }
 
-// draw one line from frame buffer
+// render frame with bilinear scaler 160x144 -> 240x240
 void FASTCODE NOFLASH(core1DrawFrame)()
 {
-        int x, y, ys, ys2, rinx;
-        u16* s;
-        u16 linebuf[WIDTH];
-
-#if DEB_FPS                     // debug display FPS
-        u16 buf[16*16];
-        u8 d1 = DebFps/10 + '0';
-        u8 d2 = (DebFps % 10) + '0';
-        u16* d = buf;
-        for (y = 0; y < 16; y++)
-        {
-                u8 ch = FontBold8x16[d1 + y*256];
-                for (x = 8; x > 0; x--)
-                {
-                        *d++ = (ch & 0x80) ? DebFpsCol : COL_BLACK;
-                        ch <<= 1;
-                }
-
-                ch = FontBold8x16[d2 + y*256];
-                for (x = 8; x > 0; x--)
-                {
-                        *d++ = (ch & 0x80) ? DebFpsCol : COL_BLACK;
-                        ch <<= 1;
-                }
-        }
+#if FRAME_SKIP
+        static int skip = 0;
+        if (skip > 0) { skip--; return; }
 #endif
 
-        // wait for first scanline (without opening output to LCD)
-        rinx = gbContext.frame_read;
-        while (rinx == gbContext.frame_write)
-        {
-                if (GB_DispMode == GB_DISPMODE_MSG) return;
-        }
+        u32 t0 = Time();
+        GPIO_Set(PERF_GPIO);     // measure performance window
 
-        // do screenshot
-        y = gbContext.frame_rline;
-        dmb();
-        if (DoEmuScreenShotReq && (y == 0))
+        // copy and horizontally scale source lines into fast buffers
+        for (int sy = 0; sy < LCD_HEIGHT; sy++)
         {
-                DoEmuScreenShot = True; // request to do emulator screenshot
-                dmb();
-                DoEmuScreenShotReq = False;
-                dmb();
-        }
-
-        for (; y < HEIGHT; )
-        {
-                // wait for scan line to be ready
-                rinx = gbContext.frame_read;
-                while (rinx == gbContext.frame_write)
+                const u16* __restrict s = &gbContext.framebuf[sy*LCD_WIDTH];
+                u16* __restrict d = hline[sy];
+                for (int x = 0; x < WIDTH; x++)
                 {
-                        if (GB_DispMode == GB_DISPMODE_MSG) return;
+                        u16 p0 = s[idx_x0[x]];
+                        u16 p1 = s[idx_x1[x]];
+                        u16 w0 = lut_x_w1[x];
+                        u16 w1 = 256 - w0;
+                        u16 r = (mul5[w0][p0 >> 11] + mul5[w1][p1 >> 11]) >> 8;
+                        u16 g = (mul6[w0][(p0 >> 5) & 0x3f] + mul6[w1][(p1 >> 5) & 0x3f]) >> 8;
+                        u16 b = (mul5[w0][p0 & 0x1f] + mul5[w1][p1 & 0x1f]) >> 8;
+                        d[x] = (r << 11) | (g << 5) | b;
+                }
+        }
+
+        // vertical scaling with double buffered DMA output
+        int buf = 0;
+        u16* out = dstbuf[buf];
+        DispStartImg(0, WIDTH, 0, HEIGHT);
+        for (int y = 0; y < HEIGHT; y++)
+        {
+                u16* __restrict s0 = hline[idx_y0[y]];
+                u16* __restrict s1 = hline[idx_y1[y]];
+                u16 w0 = lut_y_w1[y];
+                u16 w1 = 256 - w0;
+                u16* __restrict d = out;
+                for (int x = 0; x < WIDTH; x++)
+                {
+                        u16 p0 = s0[x];
+                        u16 p1 = s1[x];
+                        u16 r = (mul5[w0][p0 >> 11] + mul5[w1][p1 >> 11]) >> 8;
+                        u16 g = (mul6[w0][(p0 >> 5) & 0x3f] + mul6[w1][(p1 >> 5) & 0x3f]) >> 8;
+                        u16 b = (mul5[w0][p0 & 0x1f] + mul5[w1][p1 & 0x1f]) >> 8;
+                        d[x] = (r << 11) | (g << 5) | b;
                 }
 
-                ys = lut_y[y];
-                s = &gbContext.framebuf[rinx*LCD_WIDTH];
-
-                DispStartImg(0, WIDTH, y, y+1);
-
-#if DEB_FPS                     // debug display FPS
-               if (y < 16)
-               {
-                       u16* s2 = &buf[16*y];
-                       for (x = 0; x < WIDTH; x++)
-                       {
-                               if (x < 16)
-                                       linebuf[x] = s2[x];
-                               else
-                                       linebuf[x] = s[lut_x[x]];
-                       }
-               }
-               else
-#endif
-               {
-                       for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
-               }
-
-                DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
-                DispStopImg();
-
-                int nexty = y + 1;
-                ys2 = (nexty < HEIGHT) ? lut_y[nexty] : LCD_HEIGHT;
-
-                if (ys != ys2)
-                {
-                        dmb();
-
-                        rinx++;
-                        if (rinx >= LCD_FRAMEHEIGHT) rinx = 0;
-                        gbContext.frame_read = rinx;
-
-                        dmb();
-                }
-
-                // increase Y
-                y = nexty;
-                rinx = gbContext.frame_rline + 1;
-                if (rinx >= HEIGHT) rinx = 0;
-                gbContext.frame_rline = rinx;
-
-                // slow down FPS to speed up emulation
-                u32 del = DelayLineUs;
-                u32 line = LastLineUs;
-                while ((u32)(Time() - line) < del) {}
-                LastLineUs = Time();
+                DispWriteDataDMA(out, WIDTH * 2);
+                buf ^= 1;
+                out = dstbuf[buf];
         }
+        while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
+        DispStopImg();
+
+        GPIO_Clr(PERF_GPIO);
+
+#if FRAME_SKIP
+        u32 t1 = Time();
+        if (t1 - t0 > EMU_SYNCTIME) skip = 1; // drop next frame if too slow
+#endif
 }
 
 // PWM audio interrupt handler
@@ -1080,10 +1109,14 @@ void GB_Setup()
 	memset(GB_CacheROM, GB_CACHEINX_INV, sizeof(GB_CacheROM));
 	GB_ReqExit = False; // request to exit program
 
-	// clear context
-	memset(&gbContext, 0, sizeof(gbContext));
-        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+        // clear context and prepare scaler tables
+        memset(&gbContext, 0, sizeof(gbContext));
+        BuildScalerTables();
+
+        // prepare measurement GPIO
+        GPIO_Init(PERF_GPIO);
+        GPIO_DirOut(PERF_GPIO);
+        GPIO_Clr(PERF_GPIO);
 
 	// select colorization palette
 	gbSelectColorizationPalette();
