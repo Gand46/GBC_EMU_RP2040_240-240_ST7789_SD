@@ -47,25 +47,22 @@ u8 TitleCrc2;		// game title small CRC (value from address 0x14d)
 // scaling lookup tables
 u8 lut_x[WIDTH];
 u8 lut_y[HEIGHT];
-#if USE_AVERAGE_SCALE
-u8 lut_x_next[WIDTH];
+#if USE_BILINEAR_SCALE
+u8 lut_x_frac[WIDTH];
+u8 lut_y_frac[HEIGHT];
 
-static inline u16 avg565(u16 a, u16 b)
+static inline u16 mix565(u16 a, u16 b, u8 w)
 {
-    return (u16)(((a & 0xF7DE) + (b & 0xF7DE)) >> 1);
+    u32 rb = (a & 0xF81F) * (256 - w) + (b & 0xF81F) * w;
+    u32 g  = (a & 0x07E0) * (256 - w) + (b & 0x07E0) * w;
+    rb = (rb >> 8) & 0xF81F;
+    g  = (g >> 8) & 0x07E0;
+    return (u16)(rb | g);
 }
-#endif
 
-#if USE_DITHER
-static inline u16 dither565(u16 c, int x, int y)
+static inline u16 bilerp565(u16 p00, u16 p10, u16 p01, u16 p11, u8 fx, u8 fy)
 {
-    if ((x ^ y) & 1)
-    {
-        if ((c & 0x001F) != 0x001F) c += 0x0001;
-        if ((c & 0x07E0) != 0x07E0) c += 0x0020;
-        if ((c & 0xF800) != 0xF800) c += 0x0800;
-    }
-    return c;
+    return mix565(mix565(p00, p10, fx), mix565(p01, p11, fx), fy);
 }
 #endif
 
@@ -773,12 +770,12 @@ void gbErrorHandler(struct gb_s *gb, const enum gb_error_e gb_err, const u16 add
 void FASTCODE NOFLASH(core1DrawFrame)()
 {
         int x, y, ys, ys2, rinx;
-        u16* s;
-    u16 linebuf[WIDTH];
-#if USE_AVERAGE_SCALE
-    static u16 prev_line[WIDTH];
-    memset(prev_line, 0, sizeof(prev_line));
+        u16* s0;
+#if USE_BILINEAR_SCALE
+        u16* s1;
+        u8 fy;
 #endif
+        u16 linebuf[WIDTH];
 
 #if DEB_FPS                     // debug display FPS
         u16 buf[16*16];
@@ -831,95 +828,80 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                 }
 
                 ys = lut_y[y];
-                s = &gbContext.framebuf[rinx*LCD_WIDTH];
+                s0 = &gbContext.framebuf[rinx*LCD_WIDTH];
+#if USE_BILINEAR_SCALE
+                fy = lut_y_frac[y];
+                int rinx_next = rinx;
+                if (ys < LCD_HEIGHT-1)
+                {
+                        rinx_next++;
+                        if (rinx_next >= LCD_FRAMEHEIGHT) rinx_next = 0;
+                        while (rinx_next == gbContext.frame_write)
+                        {
+                                if (GB_DispMode == GB_DISPMODE_MSG) return;
+                        }
+                        s1 = &gbContext.framebuf[rinx_next*LCD_WIDTH];
+                }
+                else
+                {
+                        s1 = s0;
+                        fy = 0;
+                }
+#endif
 
                 DispStartImg(0, WIDTH, y, y+1);
 
 #if DEB_FPS                     // debug display FPS
-               if (y < 16)
-               {
-                       u16* s2 = &buf[16*y];
-                       for (x = 0; x < WIDTH; x++)
-                       {
-                               if (x < 16)
-#if USE_AVERAGE_SCALE
-                               {
-                                       u16 cur = s2[x];
-                                       u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
-                                       prev_line[x] = cur;
-#if USE_DITHER
-                                       linebuf[x] = dither565(pix, x, y);
+                if (y < 16)
+                {
+                        u16* s2 = &buf[16*y];
+                        for (x = 0; x < WIDTH; x++)
+                        {
+                                u16 pix;
+                                if (x < 16)
+                                {
+                                        pix = s2[x];
+                                }
+                                else
+                                {
+#if USE_BILINEAR_SCALE
+                                        int sx = lut_x[x];
+                                        int sx1 = (sx < LCD_WIDTH-1) ? sx+1 : sx;
+                                        u16 p00 = s0[sx];
+                                        u16 p10 = s0[sx1];
+                                        u16 p01 = s1[sx];
+                                        u16 p11 = s1[sx1];
+                                        pix = bilerp565(p00, p10, p01, p11, lut_x_frac[x], fy);
 #else
-                                       linebuf[x] = pix;
+                                        pix = s0[lut_x[x]];
 #endif
-                               }
+                                }
+                                linebuf[x] = pix;
+                        }
+                }
+                else
+#endif
+                {
+#if USE_BILINEAR_SCALE
+                        for (x = 0; x < WIDTH; x++)
+                        {
+                                int sx = lut_x[x];
+                                int sx1 = (sx < LCD_WIDTH-1) ? sx+1 : sx;
+                                u16 p00 = s0[sx];
+                                u16 p10 = s0[sx1];
+                                u16 p01 = s1[sx];
+                                u16 p11 = s1[sx1];
+                                linebuf[x] = bilerp565(p00, p10, p01, p11, lut_x_frac[x], fy);
+                        }
 #else
-                               {
-                                       u16 pix = s2[x];
-#if USE_DITHER
-                                       linebuf[x] = dither565(pix, x, y);
-#else
-                                       linebuf[x] = pix;
+                        for (x = 0; x < WIDTH; x++)
+                        {
+                                linebuf[x] = s0[lut_x[x]];
+                        }
 #endif
-                               }
-#endif
-                               else
-#if USE_AVERAGE_SCALE
-                               {
-                                       int sx = lut_x[x];
-                                       u16 cur = s[sx];
-                                       if (lut_x_next[x]) cur = avg565(cur, s[sx+1]);
-                                       u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
-                                       prev_line[x] = cur;
-#if USE_DITHER
-                                       linebuf[x] = dither565(pix, x, y);
-#else
-                                       linebuf[x] = pix;
-#endif
-                               }
-#else
-                               {
-                                       u16 pix = s[lut_x[x]];
-#if USE_DITHER
-                                       linebuf[x] = dither565(pix, x, y);
-#else
-                                       linebuf[x] = pix;
-#endif
-                               }
-#endif
-                       }
-               }
-               else
-#endif
-               {
-#if USE_AVERAGE_SCALE
-                       for (x = 0; x < WIDTH; x++)
-                       {
-                               int sx = lut_x[x];
-                               u16 cur = s[sx];
-                               if (lut_x_next[x]) cur = avg565(cur, s[sx+1]);
-                               u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
-                               prev_line[x] = cur;
-#if USE_DITHER
-                               linebuf[x] = dither565(pix, x, y);
-#else
-                               linebuf[x] = pix;
-#endif
-                       }
-#else
-                       for (x = 0; x < WIDTH; x++)
-                       {
-                               u16 pix = s[lut_x[x]];
-#if USE_DITHER
-                               linebuf[x] = dither565(pix, x, y);
-#else
-                               linebuf[x] = pix;
-#endif
-                       }
-#endif
-               }
+                }
 
-               DispWriteDataDMA(linebuf, WIDTH*2);
+                DispWriteDataDMA(linebuf, WIDTH*2);
                 while (SPI_IsBusy(DISP_SPI)) SPI_RxFlush(DISP_SPI);
                 DispStopImg();
 
@@ -1173,18 +1155,24 @@ void GB_Setup()
 
 	// clear context
 	memset(&gbContext, 0, sizeof(gbContext));
-#if USE_AVERAGE_SCALE
-        for (int i = 0; i < WIDTH; i++)
-        {
-                int t = i * LCD_WIDTH;
-                int sx = t / WIDTH;
-                lut_x[i] = sx;
-                lut_x_next[i] = (sx < LCD_WIDTH-1) ? 1 : 0;
-        }
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+#if USE_BILINEAR_SCALE
+       for (int i = 0; i < WIDTH; i++)
+       {
+               int t = i * LCD_WIDTH;
+               int sx = t / WIDTH;
+               lut_x[i] = sx;
+               lut_x_frac[i] = (sx < LCD_WIDTH-1) ? ((t % WIDTH) * 256 / WIDTH) : 0;
+       }
+       for (int j = 0; j < HEIGHT; j++)
+       {
+               int t = j * LCD_HEIGHT;
+               int sy = t / HEIGHT;
+               lut_y[j] = sy;
+               lut_y_frac[j] = (sy < LCD_HEIGHT-1) ? ((t % HEIGHT) * 256 / HEIGHT) : 0;
+       }
 #else
-        for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
-        for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
+       for (int i = 0; i < WIDTH; i++) lut_x[i] = (i * LCD_WIDTH) / WIDTH;
+       for (int j = 0; j < HEIGHT; j++) lut_y[j] = (j * LCD_HEIGHT) / HEIGHT;
 #endif
 
 	// select colorization palette
