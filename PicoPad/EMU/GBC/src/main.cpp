@@ -135,14 +135,14 @@ Bool ReadRomErr(const char* msg)
 	}
 }
 
-static u8 FASTCODE NOFLASH(FetchFromFlash(int page, int off))
+static u8 FASTCODE NOFLASH(FetchFromFlash)(int page, int off)
 {
        if (off == 0x3fff) return gameRomLastList[page];
        if (off >= gameRomSizeList[page]) return gameRomStuffList[page];
        return gameRom[gameRomOffList[page] + off];
 }
 
-static Bool FASTCODE NOFLASH(LoadCachePage(struct gb_s *gb, int page))
+static Bool FASTCODE NOFLASH(LoadCachePage)(struct gb_s *gb, int page)
 {
        const char* msg;
        int i, n, n2;
@@ -260,7 +260,7 @@ romerr:
        return True;
 }
 
-static u8 FASTCODE NOFLASH(FetchFromCache(struct gb_s *gb, const uint_fast32_t addr))
+static u8 FASTCODE NOFLASH(FetchFromCache)(struct gb_s *gb, const uint_fast32_t addr)
 {
        int page = addr >> GB_CACHE_SHIFT;
        if (page >= GB_ROMCACHEMAX) return 0xff;
