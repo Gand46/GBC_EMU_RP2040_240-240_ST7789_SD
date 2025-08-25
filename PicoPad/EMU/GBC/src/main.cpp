@@ -82,10 +82,10 @@ static inline uint16_t lerp565_no_mul(uint16_t a, uint16_t b, uint8_t w1)
     uint8_t r8 = mul5[w0][aR] + mul5[w1][bR];
     uint8_t g8 = mul6[w0][aG] + mul6[w1][bG];
     uint8_t b8 = mul5[w0][aB] + mul5[w1][bB];
-    uint16_t R5 = (r8 + 4) >> 3;
-    uint16_t G6 = (g8 + 2) >> 2;
-    uint16_t B5 = (b8 + 4) >> 3;
-    return (R5 << 11) | (G6 << 5) | B5;
+    uint16_t r5 = (r8 + 4) >> 3;
+    uint16_t g6 = (g8 + 2) >> 2;
+    uint16_t b5 = (b8 + 4) >> 3;
+    return (r5 << 11) | (g6 << 5) | b5;
 }
 
 // horizontal 2->3 bilinear scaling with fixed weights per phase
