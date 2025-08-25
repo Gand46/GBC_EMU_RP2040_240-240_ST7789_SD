@@ -24,6 +24,7 @@
 #define WIDTH                   240     // display width
 #define HEIGHT                  240     // display height
 #define USE_AVERAGE_SCALE       1       // 1=use simple neighbor averaging
+#define USE_DITHER              1       // 1=enable 2x2 dithering pattern
 
 // Frame buffer and font settings
 #define USE_FRAMEBUF            0               // do not use pre-defined Frame buffer

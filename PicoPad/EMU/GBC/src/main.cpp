@@ -56,6 +56,19 @@ static inline u16 avg565(u16 a, u16 b)
 }
 #endif
 
+#if USE_DITHER
+static inline u16 dither565(u16 c, int x, int y)
+{
+    if ((x ^ y) & 1)
+    {
+        if ((c & 0x001F) != 0x001F) c += 0x0001;
+        if ((c & 0x07E0) != 0x07E0) c += 0x0020;
+        if ((c & 0xF800) != 0xF800) c += 0x0800;
+    }
+    return c;
+}
+#endif
+
 
 #if DEB_FPS			// debug display FPS
 u32 DebFpsTime;			// last time FPS
@@ -832,12 +845,23 @@ void FASTCODE NOFLASH(core1DrawFrame)()
 #if USE_AVERAGE_SCALE
                                {
                                        u16 cur = s2[x];
-                                       if (y > 0) linebuf[x] = avg565(cur, prev_line[x]);
-                                       else linebuf[x] = cur;
+                                       u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
                                        prev_line[x] = cur;
+#if USE_DITHER
+                                       linebuf[x] = dither565(pix, x, y);
+#else
+                                       linebuf[x] = pix;
+#endif
                                }
 #else
-                                       linebuf[x] = s2[x];
+                               {
+                                       u16 pix = s2[x];
+#if USE_DITHER
+                                       linebuf[x] = dither565(pix, x, y);
+#else
+                                       linebuf[x] = pix;
+#endif
+                               }
 #endif
                                else
 #if USE_AVERAGE_SCALE
@@ -845,12 +869,23 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                                        int sx = lut_x[x];
                                        u16 cur = s[sx];
                                        if (lut_x_next[x]) cur = avg565(cur, s[sx+1]);
-                                       if (y > 0) linebuf[x] = avg565(cur, prev_line[x]);
-                                       else linebuf[x] = cur;
+                                       u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
                                        prev_line[x] = cur;
+#if USE_DITHER
+                                       linebuf[x] = dither565(pix, x, y);
+#else
+                                       linebuf[x] = pix;
+#endif
                                }
 #else
-                                       linebuf[x] = s[lut_x[x]];
+                               {
+                                       u16 pix = s[lut_x[x]];
+#if USE_DITHER
+                                       linebuf[x] = dither565(pix, x, y);
+#else
+                                       linebuf[x] = pix;
+#endif
+                               }
 #endif
                        }
                }
@@ -863,12 +898,24 @@ void FASTCODE NOFLASH(core1DrawFrame)()
                                int sx = lut_x[x];
                                u16 cur = s[sx];
                                if (lut_x_next[x]) cur = avg565(cur, s[sx+1]);
-                               if (y > 0) linebuf[x] = avg565(cur, prev_line[x]);
-                               else linebuf[x] = cur;
+                               u16 pix = (y > 0) ? avg565(cur, prev_line[x]) : cur;
                                prev_line[x] = cur;
+#if USE_DITHER
+                               linebuf[x] = dither565(pix, x, y);
+#else
+                               linebuf[x] = pix;
+#endif
                        }
 #else
-                       for (x = 0; x < WIDTH; x++) linebuf[x] = s[lut_x[x]];
+                       for (x = 0; x < WIDTH; x++)
+                       {
+                               u16 pix = s[lut_x[x]];
+#if USE_DITHER
+                               linebuf[x] = dither565(pix, x, y);
+#else
+                               linebuf[x] = pix;
+#endif
+                       }
 #endif
                }
 
